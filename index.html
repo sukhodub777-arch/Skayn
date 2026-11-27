@@ -6,6 +6,7 @@
   <title>SKAYN • Учёт смен</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
   <style>
@@ -1111,57 +1112,83 @@
       const dates = getMonthDates(ym);
       const staff = sortRosterList(state.roster);
 
-      const header1 = ["№", "ZZ", "Сотрудник", "Пн–Сб (ч)", "Вс (ч)", "Итого (ч)"];
-      const header2 = ["", "", "", "", "", ""];
-      dates.forEach(dt => {
-        const label = `${dt.slice(8, 10)}.${dt.slice(5, 7)}${isSunday(dt) ? " (Вс)" : ""}`;
-        header1.push(label, "", "");
-        header2.push("Начало", "Конец", "Часы");
-      });
-
-      const rows = [header1, header2];
-      const hrsCol = i => 6 + i * 3 + 2;                 // колонка «Часы» для i-го дня
+      // ---- данные ----
+      const T = trText;
+      const nD = dates.length, nE = staff.length, R0 = 3;           // сотрудники начинаются с 4-й строки
+      const hc = i => 6 + i * 3 + 2;                                // колонка «Часы» i-го дня
       const ref = (r, c) => XLSX.utils.encode_cell({ r, c });
-      const sunIdx = dates.map((dt, i) => i).filter(i => isSunday(dates[i]));
-      const monIdx = dates.map((dt, i) => i).filter(i => !isSunday(dates[i]));
-      const sumF = (r, idxs) => idxs.length ? "SUM(" + idxs.map(i => ref(r, hrsCol(i))).join(",") + ")" : "0";
-      staff.forEach((emp, idx) => {
-        let empMonSat = 0;
-        let empSun = 0;
-        const dayCells = [];
-        dates.forEach(dt => {
-          const entries = (state.days[dt]?.entries || []).filter(e => e.zz === emp.zz);
-          if (!entries.length) {
-            dayCells.push("", "", 0);
-          } else {
-            const h = entries.reduce((acc, e) => acc + calcNetHours(e.start, e.end, e.break30), 0);
-            if (isSunday(dt)) empSun += h;
-            else empMonSat += h;
-            dayCells.push(entries.map(e => e.start).join("/"), entries.map(e => e.end).join("/"), Number(h.toFixed(2)));
-          }
-        });
-        const r = rows.length; // номер строки (с нуля) в листе
+      const sunIdx = dates.map((d, i) => i).filter(i => isSunday(dates[i]));
+      const monIdx = dates.map((d, i) => i).filter(i => !isSunday(dates[i]));
+      const r2 = x => Number(x.toFixed(2));
+      const emps = staff.map(emp => ({
+        emp,
+        days: dates.map(dt => {
+          const en = (state.days[dt]?.entries || []).filter(e => e.zz === emp.zz);
+          if (!en.length) return { s: "", e: "", h: 0 };
+          return { s: en.map(e => e.start).join("/"), e: en.map(e => e.end).join("/"), h: r2(en.reduce((a, e) => a + calcNetHours(e.start, e.end, e.break30), 0)) };
+        })
+      }));
+      const empSum = (x, idxs) => r2(idxs.reduce((a, i) => a + x.days[i].h, 0));
+      const sumF = (r, idxs) => idxs.length ? "SUM(" + idxs.map(i => ref(r, hc(i))).join(",") + ")" : "0";
+      const colF = c => nE ? "SUM(" + ref(R0, c) + ":" + ref(R0 + nE - 1, c) + ")" : "0";
+
+      // ---- строки: заголовок / «Сумма за день» / Нач-Кон-Часы / сотрудники (как в приложении) ----
+      const row0 = ["№", "ZZ", T("Сотрудник"), T("Пн–Сб"), T("Вс"), T("Итого")];
+      const row1 = ["", "", T("Сумма за день:"),
+        { t: "n", v: r2(emps.reduce((a, x) => a + empSum(x, monIdx), 0)), f: colF(3) },
+        { t: "n", v: r2(emps.reduce((a, x) => a + empSum(x, sunIdx), 0)), f: colF(4) },
+        { t: "n", v: r2(emps.reduce((a, x) => a + empSum(x, monIdx) + empSum(x, sunIdx), 0)), f: colF(5) }];
+      const row2 = ["", "", "", "", "", ""];
+      dates.forEach((dt, i) => {
+        row0.push(`${dt.slice(8, 10)}.${dt.slice(5, 7)}${isSunday(dt) ? " " + T("(Вс)") : ""}`, "", "");
+        row1.push({ t: "n", v: r2(emps.reduce((a, x) => a + x.days[i].h, 0)), f: colF(hc(i)) }, "", "");
+        row2.push(T("Нач"), T("Кон"), T("Часы"));
+      });
+      const rows = [row0, row1, row2];
+      emps.forEach((x, idx) => {
+        const r = rows.length, mon = empSum(x, monIdx), sun = empSum(x, sunIdx);
         rows.push([
-          idx + 1,
-          emp.zz,
-          cleanEmployeeName(emp.name),
-          { t: "n", v: Number(empMonSat.toFixed(2)), f: sumF(r, monIdx) },
-          { t: "n", v: Number(empSun.toFixed(2)), f: sumF(r, sunIdx) },
-          { t: "n", v: Number((empMonSat + empSun).toFixed(2)), f: ref(r, 3) + "+" + ref(r, 4) },
-          ...dayCells
+          idx + 1, x.emp.zz, cleanEmployeeName(x.emp.name),
+          { t: "n", v: mon, f: sumF(r, monIdx) },
+          { t: "n", v: sun, f: sumF(r, sunIdx) },
+          { t: "n", v: r2(mon + sun), f: ref(r, 3) + "+" + ref(r, 4) },
+          ...x.days.flatMap(d => [d.s, d.e, d.h])
         ]);
       });
-      // строка «Итого» с живыми формулами по колонкам
-      if (staff.length) {
-        const first = 2, last = rows.length - 1, tr = rows.length;
-        const colSum = c => ({ t: "n", f: "SUM(" + ref(first, c) + ":" + ref(last, c) + ")" });
-        const total = ["", "", "ИТОГО", colSum(3), colSum(4), colSum(5)];
-        dates.forEach((dt, i) => total.push("", "", colSum(hrsCol(i))));
-        rows.push(total);
-      }
 
       const ws = XLSX.utils.aoa_to_sheet(rows);
-      ws["!cols"] = [{ wch: 4 }, { wch: 10 }, { wch: 28 }, { wch: 11 }, { wch: 9 }, { wch: 11 }, ...dates.flatMap(() => [{ wch: 8 }, { wch: 8 }, { wch: 7 }])];
+      const nc = 6 + nD * 3, nr = rows.length;
+
+      // ---- оформление как в приложении (работает с xlsx-js-style) ----
+      const thin = { style: "thin", color: { rgb: "9CA3AF" } };
+      const bd = { top: thin, bottom: thin, left: thin, right: thin };
+      const S = (fill, fg, bold, al) => ({
+        fill: { patternType: "solid", fgColor: { rgb: fill } },
+        font: { color: { rgb: fg }, bold: !!bold, sz: 11, name: "Calibri" },
+        alignment: { horizontal: al || "center", vertical: "center" },
+        border: bd
+      });
+      for (let r = 0; r < nr; r++) {
+        for (let c = 0; c < nc; c++) {
+          const a = ref(r, c);
+          if (!ws[a]) ws[a] = { t: "s", v: "" };
+          const di = c >= 6 ? Math.floor((c - 6) / 3) : -1;
+          const sun = di >= 0 && isSunday(dates[di]);
+          const isHrs = c >= 6 && (c - 6) % 3 === 2;
+          let st;
+          if (r === 0) st = S(c === 3 ? "1E3A8A" : c === 4 ? "78350F" : c === 5 ? "065F46" : sun ? "92400E" : "111827", "FFFFFF", true);
+          else if (r === 1) st = S("1F2937", "FDE68A", true, c === 2 ? "left" : "center");
+          else if (r === 2) st = S("F3F4F6", "374151", true);
+          else st = S(c === 3 ? "DBEAFE" : c === 4 ? "FEF3C7" : c === 5 ? "D1FAE5" : sun ? "FFFBEB" : (r % 2 ? "FFFFFF" : "F9FAFB"), "111827", c >= 3 && c <= 5, c === 2 ? "left" : "center");
+          ws[a].s = st;
+          if (r === 1 && (c >= 3 && c <= 5 || isHrs || (c >= 6 && (c - 6) % 3 === 0))) ws[a].z = "0.00";
+          else if (r >= 3 && (c >= 3 && c <= 5)) ws[a].z = "0.00";
+          else if (r >= 3 && isHrs) ws[a].z = "0.00;-0.00;;@";        // нулевые часы не показываем
+        }
+      }
+      ws["!merges"] = dates.flatMap((d, i) => [0, 1].map(r => ({ s: { r, c: 6 + i * 3 }, e: { r, c: 8 + i * 3 } })));
+      ws["!cols"] = [{ wch: 4 }, { wch: 10 }, { wch: 30 }, { wch: 11 }, { wch: 9 }, { wch: 11 }, ...dates.flatMap(() => [{ wch: 8 }, { wch: 8 }, { wch: 7 }])];
+      ws["!rows"] = [{ hpt: 24 }, { hpt: 22 }, { hpt: 20 }];
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, `Табель_${ym}`);
       XLSX.writeFile(wb, `SKAYN_Tabel_${ym}.xlsx`);
