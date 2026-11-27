@@ -1,0 +1,1467 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>SKAYN • Учёт смен</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+  <style>
+    body {
+      background-color: #f3f4f6;
+      color: #111827;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .sticky-col-1 { position: sticky; left: 0; z-index: 20; background: inherit; }
+    .sticky-col-2 { position: sticky; left: 36px; z-index: 20; background: inherit; }
+    .sticky-col-3 { position: sticky; left: 108px; z-index: 20; background: inherit; }
+    .sticky-head-1 { position: sticky; top: 0; z-index: 30; }
+    .sticky-head-2 { position: sticky; top: 30px; z-index: 30; }
+    .sticky-head-3 { position: sticky; top: 56px; z-index: 30; }
+    .corner-z { z-index: 40 !important; }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  </style>
+</head>
+<body class="pb-16">
+
+  <!-- Top Header -->
+  <header class="bg-[#111827] text-white px-4 pt-3 pb-2 shadow-md sticky top-0 z-50">
+    <div class="max-w-5xl mx-auto flex flex-wrap items-center justify-between gap-2">
+      <div class="flex items-center gap-2.5">
+        <div class="w-9 h-9 rounded-lg bg-amber-400 text-gray-950 font-extrabold flex items-center justify-center text-sm tracking-tight">SK</div>
+        <div>
+          <h1 class="text-base font-bold leading-tight">SKAYN • Учёт смен</h1>
+          <div id="syncStatus" class="text-xs text-emerald-400 flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 inline-block"></span>
+            <span>Локально • Облако не подключено</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <input id="workspaceInput" type="text" value="SHIFT-1" placeholder="Код пространства"
+          class="bg-gray-800 border border-gray-700 text-amber-300 font-mono text-xs rounded-lg px-2.5 py-2 w-28 focus:outline-none focus:border-amber-400" />
+        <button id="openSettingsBtn"
+          class="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 text-xs font-medium px-3 py-2 rounded-lg flex items-center gap-1.5">
+          <span>⚙</span><span>Настройки</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <nav class="max-w-5xl mx-auto grid grid-cols-3 gap-1 mt-3 border-t border-gray-800 pt-1 text-center text-xs font-semibold">
+      <button data-tab="shift" class="tab-btn py-2 border-b-2 border-amber-400 text-amber-400">
+        1. Смена (День / Ночь)
+      </button>
+      <button data-tab="roster" class="tab-btn py-2 border-b-2 border-transparent text-gray-400 hover:text-gray-200">
+        2. База и порядок (Лидеры)
+      </button>
+      <button data-tab="report" class="tab-btn py-2 border-b-2 border-transparent text-gray-400 hover:text-gray-200">
+        3. Табель за месяц / Excel
+      </button>
+    </nav>
+  </header>
+
+  <main class="max-w-5xl mx-auto px-3 pt-4">
+
+    <!-- TAB 1: SHIFT -->
+    <section id="tab-shift" class="tab-panel space-y-4">
+      <div class="bg-white rounded-2xl p-4 shadow-sm border border-gray-200 space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="flex items-center gap-2">
+            <label class="text-xs font-bold uppercase text-gray-500">Дата начала смены:</label>
+            <input id="shiftDateInput" type="date" class="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm font-semibold bg-gray-50" />
+          </div>
+          <div class="flex items-center gap-2">
+            <span id="dayCategoryBadge" class="px-2.5 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-800">Пн–Сб</span>
+            <button id="toggleDayLockBtn" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-gray-100 hover:bg-gray-200 text-gray-800 border border-gray-300">
+              🔓 День открыт
+            </button>
+          </div>
+        </div>
+
+        <div class="bg-gray-50 border border-gray-200 rounded-xl p-2.5 text-xs text-gray-600">
+          <b>Правило учёта:</b> все часы смены (включая ночную смену 18:00 → 06:00 утра следующего дня) засчитываются в <b>дату начала смены</b> и автоматически идут в <b>Пн–Сб</b> или <b>Вс</b>. Максимум 2 непересекающиеся смены в сутки на человека.
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <label class="cursor-pointer bg-amber-400 hover:bg-amber-500 text-gray-950 font-bold text-xs py-2.5 px-3 rounded-xl flex items-center justify-center gap-1.5 shadow-sm text-center">
+            <span>📷 Фото листа (ИИ)</span>
+            <input id="ocrCameraInput" type="file" accept="image/*" capture="environment" class="hidden" />
+          </label>
+          <label class="cursor-pointer bg-gray-900 hover:bg-gray-800 text-white font-semibold text-xs py-2.5 px-3 rounded-xl flex items-center justify-center gap-1.5 shadow-sm text-center">
+            <span>🖼 Загрузить фото</span>
+            <input id="ocrGalleryInput" type="file" accept="image/*" class="hidden" />
+          </label>
+          <button id="openQrBtn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs py-2.5 px-3 rounded-xl flex items-center justify-center gap-1.5 shadow-sm">
+            <span>📱 Сканер QR-кода</span>
+          </button>
+          <button id="openManualBtn" class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs py-2.5 px-3 rounded-xl flex items-center justify-center gap-1.5 shadow-sm">
+            <span>➕ Добавить вручную</span>
+          </button>
+        </div>
+
+        <!-- OCR Status / Progress / Error Box -->
+        <div id="ocrStatusBox" class="hidden rounded-xl p-3 text-xs border"></div>
+
+        <div class="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-gray-100">
+          <div class="flex items-center gap-3 text-xs">
+            <button id="fillTestBtn" class="text-indigo-600 hover:underline font-medium">Тест (20 чел.)</button>
+            <button id="clearDayBtn" class="text-rose-600 hover:underline font-medium">Очистить день</button>
+          </div>
+          <div class="flex items-center gap-2 text-xs">
+            <span class="text-gray-500">Массово:</span>
+            <input id="bulkStartInput" type="time" value="06:00" class="border border-gray-300 rounded px-1.5 py-1 text-xs" />
+            <span>→</span>
+            <input id="bulkEndInput" type="time" value="18:00" class="border border-gray-300 rounded px-1.5 py-1 text-xs" />
+            <button id="applyBulkTimeBtn" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold px-2.5 py-1 rounded">Всем</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Summary Cards -->
+      <div class="grid grid-cols-3 gap-2.5">
+        <div class="bg-white rounded-xl p-3 border border-gray-200 shadow-sm">
+          <div class="text-[11px] text-gray-500 font-medium">Выходов в смену</div>
+          <div id="statCount" class="text-xl font-extrabold text-gray-900 mt-0.5">0</div>
+        </div>
+        <div class="bg-white rounded-xl p-3 border border-gray-200 shadow-sm">
+          <div class="text-[11px] text-gray-500 font-medium">Чистых часов (-30м)</div>
+          <div id="statHours" class="text-xl font-extrabold text-emerald-600 mt-0.5">0.00 ч</div>
+        </div>
+        <div class="bg-white rounded-xl p-3 border border-gray-200 shadow-sm">
+          <div class="text-[11px] text-gray-500 font-medium">Категория дня</div>
+          <div id="statCategory" class="text-xl font-extrabold text-blue-700 mt-0.5">Пн–Сб</div>
+        </div>
+      </div>
+
+      <!-- Shifts List -->
+      <div id="shiftListContainer" class="space-y-2.5"></div>
+    </section>
+
+    <!-- TAB 2: ROSTER & LEADERS -->
+    <section id="tab-roster" class="tab-panel hidden space-y-4">
+      <div class="bg-white rounded-2xl p-4 shadow-sm border border-gray-200 space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 class="text-sm font-bold text-gray-900">База сотрудников и порядок лидеров</h2>
+            <p class="text-xs text-gray-500">Лидеры закрепляются наверху в заданном порядке, остальные автоматически сортируются по номеру ZZ.</p>
+          </div>
+          <button id="addEmployeeRosterBtn" class="bg-gray-900 text-white text-xs font-semibold px-3 py-2 rounded-xl hover:bg-gray-800">
+            + Новый сотрудник
+          </button>
+        </div>
+        <div id="rosterListContainer" class="divide-y divide-gray-100"></div>
+      </div>
+    </section>
+
+    <!-- TAB 3: MONTHLY REPORT & EXCEL -->
+    <section id="tab-report" class="tab-panel hidden space-y-4">
+      <div class="bg-white rounded-2xl p-4 shadow-sm border border-gray-200 space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="flex items-center gap-2">
+            <label class="text-xs font-bold uppercase text-gray-500">Месяц отчёта:</label>
+            <input id="reportMonthInput" type="month" class="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm font-semibold bg-gray-50" />
+          </div>
+          <button id="exportExcelBtn" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm flex items-center gap-1.5">
+            <span>📊 Скачать табель Excel (.xlsx)</span>
+          </button>
+        </div>
+
+        <div class="grid grid-cols-3 gap-2.5">
+          <div class="bg-gray-50 rounded-xl p-2.5 border border-gray-200">
+            <div class="text-[11px] text-gray-500">Всего часов Пн–Сб</div>
+            <div id="monthMonSatTotal" class="text-lg font-extrabold text-gray-900">0.00 ч</div>
+          </div>
+          <div class="bg-amber-50 rounded-xl p-2.5 border border-amber-200">
+            <div class="text-[11px] text-amber-800">Всего часов Вс</div>
+            <div id="monthSunTotal" class="text-lg font-extrabold text-amber-700">0.00 ч</div>
+          </div>
+          <div class="bg-emerald-50 rounded-xl p-2.5 border border-emerald-200">
+            <div class="text-[11px] text-emerald-800">Итого за месяц</div>
+            <div id="monthGrandTotal" class="text-lg font-extrabold text-emerald-700">0.00 ч</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+        <div id="reportTableWrapper" class="overflow-x-auto max-h-[70vh]"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- MODAL: SETTINGS -->
+  <div id="settingsModal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-3">
+    <div class="bg-white rounded-2xl max-w-md w-full p-5 space-y-4 shadow-xl max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between">
+        <h3 class="text-base font-bold text-gray-900">Настройки облака и распознавания фото</h3>
+        <button class="close-modal text-gray-400 hover:text-gray-700 text-xl font-bold">&times;</button>
+      </div>
+      <p class="text-xs text-gray-600 leading-relaxed">
+        Для совместной работы онлайн вставьте данные Supabase, укажите название смены в поле вверху (например, <b>SHIFT-1</b>) и пароль этой смены. Для распознавания фото листов вставьте ключ Gemini API.
+      </p>
+
+      <div class="space-y-1">
+        <label class="block text-xs font-bold text-gray-700">Gemini API Key (для распознавания фото листов):</label>
+        <input id="geminiKeyInput" type="password" placeholder="AIzaSy..." class="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs font-mono" />
+        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" class="text-[11px] text-indigo-600 font-semibold">Получить бесплатный ключ Gemini →</a>
+        <div class="flex items-center justify-between pt-1">
+          <span class="text-[11px] text-gray-500">Модель: <b>gemini-3.8-flash</b> (с резервом)</span>
+          <button id="testGeminiKeyBtn" type="button" class="text-xs text-indigo-600 hover:underline font-semibold">Проверить ключ</button>
+        </div>
+        <div id="geminiTestResult" class="text-[11px] hidden pt-1"></div>
+      </div>
+
+      <div class="space-y-1">
+        <label class="block text-xs font-bold text-gray-700">Supabase (онлайн-синхронизация):</label>
+        <input id="sbUrlInput" type="text" placeholder="Project URL: https://xxxx.supabase.co" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs font-mono" />
+        <input id="sbKeyInput" type="password" placeholder="anon public key" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs font-mono" />
+        <input id="sbPassInput" type="password" placeholder="Пароль смены (или админа)" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs" />
+      </div>
+
+      <button id="copySetupLinkBtn" class="w-full bg-indigo-50 hover:bg-indigo-100 text-indigo-800 text-xs font-bold py-2.5 px-3 rounded-xl border border-indigo-200">
+        📲 Скопировать ссылку настройки для другого телефона
+      </button>
+      <p class="text-[10px] text-gray-500 -mt-2">В ссылке — ключи и пароль. Отправляйте только в личные сообщения.</p>
+
+      <div class="grid grid-cols-2 gap-2 pt-1">
+        <button id="exportJsonBtn" class="bg-gray-100 hover:bg-gray-200 text-gray-800 text-xs font-semibold py-2.5 px-3 rounded-xl border border-gray-300">
+          💾 Скачать бэкап JSON
+        </button>
+        <label class="cursor-pointer bg-gray-100 hover:bg-gray-200 text-gray-800 text-xs font-semibold py-2.5 px-3 rounded-xl border border-gray-300 text-center">
+          📂 Восстановить JSON
+          <input id="importJsonInput" type="file" accept=".json,application/json" class="hidden" />
+        </label>
+      </div>
+
+      <button id="saveSettingsBtn" class="w-full bg-gray-900 hover:bg-gray-800 text-white font-bold text-sm py-2.5 rounded-xl">
+        Сохранить настройки
+      </button>
+    </div>
+  </div>
+
+  <!-- MODAL: MANUAL ENTRY -->
+  <div id="manualModal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-3">
+    <div class="bg-white rounded-2xl max-w-md w-full p-5 space-y-3 shadow-xl">
+      <div class="flex items-center justify-between">
+        <h3 class="text-base font-bold text-gray-900">Добавить смену вручную</h3>
+        <button class="close-modal text-gray-400 hover:text-gray-700 text-xl font-bold">&times;</button>
+      </div>
+
+      <div>
+        <label class="block text-xs font-bold text-gray-700 mb-1">Выбрать из базы (необязательно):</label>
+        <select id="manualRosterSelect" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs bg-gray-50">
+          <option value="">-- Новый / ввести ниже --</option>
+        </select>
+      </div>
+
+      <div class="grid grid-cols-3 gap-2">
+        <div>
+          <label class="block text-xs font-bold text-gray-700 mb-1">Номер ZZ</label>
+          <input id="manualZzInput" type="text" placeholder="ZZ00345" class="w-full border border-gray-300 rounded-xl px-2.5 py-2 text-xs font-mono uppercase" />
+        </div>
+        <div class="col-span-2">
+          <label class="block text-xs font-bold text-gray-700 mb-1">Имя и Фамилия</label>
+          <input id="manualNameInput" type="text" placeholder="Yevhen Sukhodub" class="w-full border border-gray-300 rounded-xl px-2.5 py-2 text-xs" />
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2">
+        <div>
+          <label class="block text-xs font-bold text-gray-700 mb-1">Начало смены</label>
+          <input id="manualStartInput" type="time" value="06:00" class="w-full border border-gray-300 rounded-xl px-2.5 py-2 text-xs" />
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-gray-700 mb-1">Конец смены</label>
+          <input id="manualEndInput" type="time" value="18:00" class="w-full border border-gray-300 rounded-xl px-2.5 py-2 text-xs" />
+        </div>
+      </div>
+
+      <label class="flex items-center gap-2 text-xs font-medium text-gray-700 pt-1">
+        <input id="manualBreakInput" type="checkbox" checked class="rounded text-amber-500" />
+        <span>Вычесть обязательный перерыв 30 мин (-0.50 ч)</span>
+      </label>
+
+      <button id="saveManualShiftBtn" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm py-2.5 rounded-xl mt-2">
+        Добавить в смену
+      </button>
+    </div>
+  </div>
+
+  <!-- MODAL: QR SCANNER -->
+  <div id="qrModal" class="fixed inset-0 bg-black/75 z-50 hidden flex items-center justify-center p-3">
+    <div class="bg-white rounded-2xl max-w-md w-full p-4 space-y-3 shadow-xl">
+      <div class="flex items-center justify-between">
+        <h3 class="text-base font-bold text-gray-900">Сканер QR-кода пропуска</h3>
+        <button id="closeQrBtn" class="text-gray-400 hover:text-gray-700 text-xl font-bold">&times;</button>
+      </div>
+      <div class="relative rounded-xl overflow-hidden bg-black aspect-square">
+        <video id="qrVideo" class="w-full h-full object-cover" playsinline></video>
+        <canvas id="qrCanvas" class="hidden"></canvas>
+      </div>
+      <p id="qrStatusText" class="text-xs text-center text-gray-600">Наведите камеру на QR-код (например: ZZ00345 Yevhen Sukhodub Skayn)</p>
+    </div>
+  </div>
+
+  <script type="module">
+
+    // Optional built-in config (leave empty to configure via Settings UI)
+    const DEFAULT_APP_CONFIG = {
+      geminiApiKey: "",
+      supabaseUrl: "",   // можно вписать заранее: https://xxxx.supabase.co
+      supabaseKey: ""    // anon public key
+    };
+
+    const LS_KEYS = {
+      WORKSPACE: "skayn_workspace_code",
+      GEMINI: "skayn_gemini_api_key",
+      SB_URL: "skayn_sb_url",
+      SB_KEY: "skayn_sb_key",
+      SB_PASS: "skayn_sb_pass"
+    };
+
+    // Ссылка настройки: https://сайт/#cfg=... автоматически сохраняет настройки на этом телефоне
+    (function applySetupLink() {
+      const m = location.hash.match(/[#&]cfg=([^&]+)/);
+      if (!m) return;
+      try {
+        const b64 = decodeURIComponent(m[1]).replace(/-/g, "+").replace(/_/g, "/");
+        const c = JSON.parse(decodeURIComponent(escape(atob(b64))));
+        if (c.u) localStorage.setItem(LS_KEYS.SB_URL, c.u);
+        if (c.k) localStorage.setItem(LS_KEYS.SB_KEY, c.k);
+        if (c.p) localStorage.setItem(LS_KEYS.SB_PASS, c.p);
+        if (c.g) localStorage.setItem(LS_KEYS.GEMINI, c.g);
+        if (c.w) localStorage.setItem(LS_KEYS.WORKSPACE, String(c.w).toUpperCase());
+        setTimeout(() => alert("Настройки применены ✅"), 300);
+      } catch (e) { setTimeout(() => alert("Ссылка настройки повреждена"), 300); }
+      history.replaceState(null, "", location.pathname + location.search);
+    })();
+
+    let state = {
+      workspace: localStorage.getItem(LS_KEYS.WORKSPACE) || "SHIFT-1",
+      roster: [], // { zz, name, isLeader, leaderOrder }
+      days: {}    // { "YYYY-MM-DD": { locked: false, entries: [ { id, zz, name, start, end, break30 } ] } }
+    };
+
+    let sb = null, pollTimer = null, lastRemoteTs = 0, syncBusy = false;
+    let isRemoteApplying = false;
+    let qrStream = null;
+    let qrAnimFrame = null;
+
+    // --- DOM Elements ---
+    const workspaceInput = document.getElementById("workspaceInput");
+    const syncStatus = document.getElementById("syncStatus");
+    const shiftDateInput = document.getElementById("shiftDateInput");
+    const reportMonthInput = document.getElementById("reportMonthInput");
+    const ocrStatusBox = document.getElementById("ocrStatusBox");
+
+    // Init dates
+    const todayIso = new Date().toISOString().slice(0, 10);
+    shiftDateInput.value = todayIso;
+    reportMonthInput.value = todayIso.slice(0, 7);
+    workspaceInput.value = state.workspace;
+
+    // --- Helpers ---
+    function cleanEmployeeName(rawName) {
+      if (!rawName) return "";
+      return rawName
+        .replace(/\b(skayn|white_colloar|white_collar|white\s*collar)\b/gi, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+
+    function parseQrPayload(text) {
+      const cleaned = (text || "").trim();
+      const match = cleaned.match(/^(ZZ\d+)\s+(.+)$/i);
+      if (match) {
+        return {
+          zz: match[1].toUpperCase(),
+          name: cleanEmployeeName(match[2])
+        };
+      }
+      return null;
+    }
+
+    function timeToMinutes(t) {
+      if (!t || !t.includes(":")) return null;
+      const [h, m] = t.split(":").map(Number);
+      if (Number.isNaN(h) || Number.isNaN(m)) return null;
+      return h * 60 + m;
+    }
+
+    function getShiftIntervalMinutes(startStr, endStr) {
+      const s = timeToMinutes(startStr);
+      const e = timeToMinutes(endStr);
+      if (s === null || e === null) return null;
+      let endAdjusted = e;
+      if (e <= s) endAdjusted += 24 * 60; // Night shift crossing midnight
+      return { start: s, end: endAdjusted, durationMin: endAdjusted - s };
+    }
+
+    function calcNetHours(startStr, endStr, break30) {
+      const interval = getShiftIntervalMinutes(startStr, endStr);
+      if (!interval) return 0;
+      let mins = interval.durationMin - (break30 ? 30 : 0);
+      if (mins < 0) mins = 0;
+      return Math.round((mins / 60) * 100) / 100;
+    }
+
+    function isSunday(dateStr) {
+      const [y, m, d] = dateStr.split("-").map(Number);
+      const dt = new Date(Date.UTC(y, m - 1, d));
+      return dt.getUTCDay() === 0;
+    }
+
+    function sortRosterList(list) {
+      return [...list].sort((a, b) => {
+        if (a.isLeader && !b.isLeader) return -1;
+        if (!a.isLeader && b.isLeader) return 1;
+        if (a.isLeader && b.isLeader) {
+          return (a.leaderOrder ?? 999) - (b.leaderOrder ?? 999);
+        }
+        return (a.zz || "").localeCompare(b.zz || "", undefined, { numeric: true });
+      });
+    }
+
+    function ensureDay(dateStr) {
+      if (!state.days[dateStr]) {
+        state.days[dateStr] = { locked: false, entries: [] };
+      }
+      return state.days[dateStr];
+    }
+
+    function upsertRosterMember(zz, name) {
+      const normZz = (zz || "").trim().toUpperCase();
+      const normName = cleanEmployeeName(name);
+      if (!normZz) return;
+      const existing = state.roster.find(r => r.zz === normZz);
+      if (existing) {
+        if (normName && existing.name !== normName) existing.name = normName;
+      } else {
+        state.roster.push({ zz: normZz, name: normName || normZz, isLeader: false, leaderOrder: 999 });
+      }
+      state.roster = sortRosterList(state.roster);
+    }
+
+    function validateSecondShift(dateStr, zz, startStr, endStr, ignoreEntryId = null) {
+      const day = ensureDay(dateStr);
+      const samePerson = day.entries.filter(e => e.zz === zz && e.id !== ignoreEntryId);
+      if (samePerson.length >= 2) {
+        return "У сотрудника уже записаны 2 смены за этот день (3-я смена заблокирована).";
+      }
+      if (samePerson.length === 1) {
+        const first = samePerson[0];
+        if (!first.start || !first.end) {
+          return "Нельзя добавить 2-ю смену, пока не закрыта 1-я смена (укажите время окончания).";
+        }
+        const int1 = getShiftIntervalMinutes(first.start, first.end);
+        const int2 = getShiftIntervalMinutes(startStr, endStr);
+        if (int1 && int2) {
+          const overlap = Math.max(int1.start, int2.start) < Math.min(int1.end, int2.end);
+          if (overlap) {
+            return `Интервал (${startStr}–${endStr}) пересекается с первой сменой (${first.start}–${first.end}).`;
+          }
+        }
+      }
+      return null;
+    }
+
+    // --- Persistence (Local + Firebase) ---
+    function getLocalStorageDataKey() {
+      return `skayn_tabel_data_${state.workspace}`;
+    }
+
+    function loadLocalData() {
+      try {
+        const raw = localStorage.getItem(getLocalStorageDataKey());
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          state.roster = sortRosterList(parsed.roster || []);
+          state.days = parsed.days || {};
+        } else {
+          state.roster = [];
+          state.days = {};
+        }
+      } catch (e) {
+        console.error("Local load error:", e);
+      }
+    }
+
+    async function saveData() {
+      localStorage.setItem(getLocalStorageDataKey(), JSON.stringify({
+        roster: state.roster,
+        days: state.days,
+        updatedAt: Date.now()
+      }));
+
+      if (sb && !isRemoteApplying) await pushRemote();
+    }
+
+    function setSyncBadge(text, color = "emerald") {
+      const dotColor = color === "emerald" ? "bg-emerald-400" : color === "amber" ? "bg-amber-400" : "bg-gray-400";
+      const txtColor = color === "emerald" ? "text-emerald-400" : color === "amber" ? "text-amber-300" : "text-gray-300";
+      syncStatus.className = `text-xs ${txtColor} flex items-center gap-1.5`;
+      syncStatus.innerHTML = `<span class="w-2 h-2 rounded-full ${dotColor} inline-block"></span><span>${text}</span>`;
+    }
+
+    function sbCfg() {
+      return {
+        url: (localStorage.getItem(LS_KEYS.SB_URL) || DEFAULT_APP_CONFIG.supabaseUrl || "").trim(),
+        key: (localStorage.getItem(LS_KEYS.SB_KEY) || DEFAULT_APP_CONFIG.supabaseKey || "").trim(),
+        pass: localStorage.getItem(LS_KEYS.SB_PASS) || ""
+      };
+    }
+
+    async function initSupabaseSync() {
+      clearInterval(pollTimer); pollTimer = null; sb = null; lastRemoteTs = 0;
+      const c = sbCfg();
+      if (!c.url || !c.key) { setSyncBadge("Локально • Облако не подключено", "gray"); return; }
+      if (!c.pass) { setSyncBadge("Введите пароль смены в ⚙ Настройках", "amber"); return; }
+      try {
+        if (!window.supabase) throw new Error("библиотека Supabase не загрузилась");
+        let u = c.url.replace(/\s+/g, "");
+        if (!/^https?:\/\//i.test(u)) u = "https://" + u;
+        u = new URL(u).origin;
+        if (!/\.supabase\.co$/i.test(new URL(u).hostname)) throw new Error("URL должен быть вида https://xxxx.supabase.co");
+        sb = window.supabase.createClient(u, c.key.replace(/\s+/g, ""));
+      } catch (e) { setSyncBadge("Supabase: " + e.message, "amber"); return; }
+      setSyncBadge("Подключение к облаку...", "amber");
+      await pullRemote(true);
+      pollTimer = setInterval(() => pullRemote(false), 6000);
+    }
+
+    async function pullRemote(first) {
+      if (!sb || syncBusy) return;
+      try {
+        const { data, error } = await sb.rpc("get_shift", { p_name: state.workspace, p_pass: sbCfg().pass });
+        if (error) throw error;
+        if (!data || data.ok === false) { setSyncBadge("Неверный пароль или название смены", "amber"); return; }
+        setSyncBadge(`Онлайн • ${state.workspace}`, "emerald");
+        if (data.updated_at && data.updated_at !== lastRemoteTs) {
+          lastRemoteTs = data.updated_at;
+          isRemoteApplying = true;
+          state.roster = sortRosterList(data.roster || []);
+          state.days = data.days || {};
+          localStorage.setItem(getLocalStorageDataKey(), JSON.stringify({ roster: state.roster, days: state.days, updatedAt: Date.now() }));
+          renderAll();
+          isRemoteApplying = false;
+        } else if (first && !data.updated_at && (state.roster.length || Object.keys(state.days).length)) {
+          await pushRemote();
+        }
+      } catch (err) {
+        console.error("Supabase read error:", err);
+        setSyncBadge("Ошибка сети Supabase", "amber");
+      }
+    }
+
+    async function pushRemote() {
+      if (!sb) return;
+      syncBusy = true;
+      try {
+        const ts = Date.now();
+        const { data, error } = await sb.rpc("save_shift", { p_name: state.workspace, p_pass: sbCfg().pass, p_roster: state.roster, p_days: state.days, p_ts: ts });
+        if (error) throw error;
+        if (!data || data.ok === false) setSyncBadge("Неверный пароль или название смены", "amber");
+        else lastRemoteTs = ts;
+      } catch (err) {
+        console.error("Supabase write error:", err);
+        setSyncBadge("Ошибка записи в облако", "amber");
+      } finally { syncBusy = false; }
+    }
+
+    // --- OCR WITH GEMINI (gemini-3.8-flash + FALLBACK, COMPRESSION, TIMEOUT & ERROR DISPLAY) ---
+    function showOcrStatus(type, title, details = "") {
+      ocrStatusBox.classList.remove("hidden", "bg-blue-50", "border-blue-200", "text-blue-900", "bg-emerald-50", "border-emerald-200", "text-emerald-900", "bg-rose-50", "border-rose-200", "text-rose-900");
+      if (type === "loading") {
+        ocrStatusBox.classList.add("bg-blue-50", "border-blue-200", "text-blue-900");
+        ocrStatusBox.innerHTML = `<div class="flex items-center gap-2 font-semibold"><span class="animate-spin inline-block">⏳</span><span>${title}</span></div>${details ? `<div class="mt-1 text-[11px] opacity-80">${details}</div>` : ""}`;
+      } else if (type === "success") {
+        ocrStatusBox.classList.add("bg-emerald-50", "border-emerald-200", "text-emerald-900");
+        ocrStatusBox.innerHTML = `<div class="flex items-center justify-between"><span class="font-bold">✅ ${title}</span><button onclick="document.getElementById('ocrStatusBox').classList.add('hidden')" class="text-xs underline">Скрыть</button></div>${details ? `<div class="mt-1 text-[11px]">${details}</div>` : ""}`;
+      } else {
+        ocrStatusBox.classList.add("bg-rose-50", "border-rose-200", "text-rose-900");
+        ocrStatusBox.innerHTML = `<div class="flex items-center justify-between"><span class="font-bold">❌ ${title}</span><button onclick="document.getElementById('ocrStatusBox').classList.add('hidden')" class="text-xs underline">Закрыть</button></div>${details ? `<div class="mt-1 text-[11px] break-words">${details}</div>` : ""}`;
+      }
+    }
+
+    function compressImageToJpegBase64(file, maxSide = 1600, quality = 0.82) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error("Не удалось прочитать файл изображения."));
+        reader.onload = () => {
+          const img = new Image();
+          img.onerror = () => reject(new Error("Файл не является корректным изображением."));
+          img.onload = () => {
+            let w = img.width;
+            let h = img.height;
+            if (w > maxSide || h > maxSide) {
+              if (w > h) {
+                h = Math.round((h * maxSide) / w);
+                w = maxSide;
+              } else {
+                w = Math.round((w * maxSide) / h);
+                h = maxSide;
+              }
+            }
+            const canvas = document.createElement("canvas");
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(img, 0, 0, w, h);
+            const dataUrl = canvas.toDataURL("image/jpeg", quality);
+            const base64 = dataUrl.split(",")[1];
+            resolve({ base64, mimeType: "image/jpeg" });
+          };
+          img.src = reader.result;
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function callGeminiVisionWithFallback(apiKey, base64Data, mimeType) {
+      const models = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"];
+      const prompt = `Ты распознаёшь бумажный лист табеля посещаемости (Attendance Record - SKAYN).
+Извлеки каждую строку сотрудника с заполненным присутствием или временем.
+Верни ТОЛЬКО валидный JSON-массив объектов без markdown-обёртки и пояснений:
+[{"zz": "ZZ00345", "name": "Yevhen Sukhodub", "start": "06:00", "end": "18:00"}]
+Правила:
+- zz: табельный номер формата ZZ и цифры (например ZZ00345).
+- name: Имя и Фамилия латиницей без слов Skayn или White_Colloar.
+- start и end: время в формате HH:MM (24 часа). Если время неразборчиво или не указано, поставь "06:00" для start и "" для end.`;
+
+      let lastError = null;
+
+      for (const model of models) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 35000);
+
+        try {
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+          const response = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: controller.signal,
+            body: JSON.stringify({
+              contents: [{
+                parts: [
+                  { text: prompt },
+                  { inline_data: { mime_type: mimeType, data: base64Data } }
+                ]
+              }],
+              generationConfig: {
+                temperature: 0.1,
+                responseMimeType: "application/json"
+              }
+            })
+          });
+
+          clearTimeout(timeoutId);
+
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            const msg = data?.error?.message || `HTTP ${response.status}`;
+            if (response.status === 404 || /not found|not supported|no longer available/i.test(msg)) {
+              lastError = new Error(`Модель ${model}: ${msg}`);
+              continue;
+            }
+            throw new Error(`Ошибка Gemini API (${response.status}): ${msg}`);
+          }
+
+          const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          if (!rawText) {
+            throw new Error("Gemini вернул пустой ответ. Попробуйте сделать более чёткое фото.");
+          }
+
+          const cleanedJson = rawText.replace(/```json\s*/gi, "").replace(/```/g, "").trim();
+          const parsed = JSON.parse(cleanedJson);
+          if (!Array.isArray(parsed)) {
+            throw new Error("Неожиданный формат ответа от ИИ (ожидался список сотрудников).");
+          }
+          return parsed;
+        } catch (err) {
+          clearTimeout(timeoutId);
+          if (err.name === "AbortError") {
+            lastError = new Error("Превышено время ожидания ответа от Gemini (35 сек). Проверьте интернет или качество фото.");
+          } else {
+            lastError = err;
+          }
+          if (/400|401|403|429|API key|quota/i.test(lastError.message)) {
+            throw lastError;
+          }
+        }
+      }
+
+      throw lastError || new Error("Не удалось распознать лист ни одной из моделей Gemini.");
+    }
+
+    async function handleOcrFile(file) {
+      if (!file) return;
+      const dateStr = shiftDateInput.value;
+      const day = ensureDay(dateStr);
+      if (day.locked) {
+        showOcrStatus("error", "День закрыт для редактирования", "Нажмите «🔒 День закрыт», чтобы разблокировать добавление записей.");
+        return;
+      }
+
+      const apiKey = (localStorage.getItem(LS_KEYS.GEMINI) || DEFAULT_APP_CONFIG.geminiApiKey || "").trim();
+      if (!apiKey) {
+        showOcrStatus("error", "Не указан Gemini API Key", "Откройте «⚙ Настройки» вверху справа, вставьте бесплатный ключ из Google AI Studio и нажмите «Сохранить настройки».");
+        return;
+      }
+
+      try {
+        showOcrStatus("loading", "Сжимаем фото и отправляем в Gemini...", "Обычно занимает 3–8 секунд.");
+        const { base64, mimeType } = await compressImageToJpegBase64(file, 1600, 0.82);
+
+        showOcrStatus("loading", "Распознаём строки листа табеля...", "Извлекаем номера ZZ, имена и время смен.");
+        const rows = await callGeminiVisionWithFallback(apiKey, base64, mimeType);
+
+        if (!rows.length) {
+          showOcrStatus("error", "Сотрудники на фото не найдены", "Убедитесь, что таблица на фото чёткая, без сильных бликов и обрезанных столбцов.");
+          return;
+        }
+
+        let added = 0;
+        let skipped = 0;
+        const notes = [];
+
+        for (const row of rows) {
+          const zz = (row.zz || "").toString().trim().toUpperCase();
+          const name = cleanEmployeeName((row.name || "").toString());
+          const start = /^\d{2}:\d{2}$/.test(row.start || "") ? row.start : "06:00";
+          const end = /^\d{2}:\d{2}$/.test(row.end || "") ? row.end : "18:00";
+
+          if (!zz) {
+            skipped++;
+            continue;
+          }
+
+          upsertRosterMember(zz, name);
+          const errMsg = validateSecondShift(dateStr, zz, start, end);
+          if (errMsg) {
+            skipped++;
+            notes.push(`${zz}: ${errMsg}`);
+            continue;
+          }
+
+          day.entries.push({
+            id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()),
+            zz,
+            name: name || (state.roster.find(r => r.zz === zz)?.name || zz),
+            start,
+            end,
+            break30: true
+          });
+          added++;
+        }
+
+        await saveData();
+        renderAll();
+
+        const extraInfo = skipped > 0
+          ? `Пропущено: ${skipped}. ${notes.slice(0, 2).join(" | ")}`
+          : "Все распознанные строки добавлены в текущую смену.";
+        showOcrStatus("success", `Распознано и добавлено: ${added} чел.`, extraInfo);
+      } catch (err) {
+        console.error("OCR process failed:", err);
+        showOcrStatus("error", "Не удалось распознать лист", err.message || "Неизвестная ошибка при обращении к Gemini API.");
+      }
+    }
+
+    // --- RENDERING ---
+    function renderShiftTab() {
+      const dateStr = shiftDateInput.value;
+      const day = ensureDay(dateStr);
+      const sun = isSunday(dateStr);
+
+      const badge = document.getElementById("dayCategoryBadge");
+      const statCat = document.getElementById("statCategory");
+      if (sun) {
+        badge.textContent = "Воскресенье (Вс)";
+        badge.className = "px-2.5 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800";
+        statCat.textContent = "Вс";
+        statCat.className = "text-xl font-extrabold text-amber-600 mt-0.5";
+      } else {
+        badge.textContent = "Пн–Сб";
+        badge.className = "px-2.5 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-800";
+        statCat.textContent = "Пн–Сб";
+        statCat.className = "text-xl font-extrabold text-blue-700 mt-0.5";
+      }
+
+      const lockBtn = document.getElementById("toggleDayLockBtn");
+      lockBtn.textContent = day.locked ? "🔒 День закрыт" : "🔓 День открыт";
+
+      const rosterOrderMap = new Map(sortRosterList(state.roster).map((r, idx) => [r.zz, idx]));
+      const sortedEntries = [...day.entries].sort((a, b) => {
+        const idxA = rosterOrderMap.has(a.zz) ? rosterOrderMap.get(a.zz) : 9999;
+        const idxB = rosterOrderMap.has(b.zz) ? rosterOrderMap.get(b.zz) : 9999;
+        if (idxA !== idxB) return idxA - idxB;
+        return (a.zz || "").localeCompare(b.zz || "", undefined, { numeric: true });
+      });
+
+      let totalHours = 0;
+      sortedEntries.forEach(e => {
+        totalHours += calcNetHours(e.start, e.end, e.break30);
+      });
+
+      document.getElementById("statCount").textContent = sortedEntries.length;
+      document.getElementById("statHours").textContent = `${totalHours.toFixed(2)} ч`;
+
+      const container = document.getElementById("shiftListContainer");
+      if (!sortedEntries.length) {
+        container.innerHTML = `<div class="bg-white rounded-2xl p-8 text-center text-xs text-gray-400 border border-dashed border-gray-300">На ${dateStr} пока нет записей. Загрузите фото листа, отсканируйте QR-код или добавьте сотрудника вручную.</div>`;
+        return;
+      }
+
+      container.innerHTML = sortedEntries.map((entry, idx) => {
+        const hrs = calcNetHours(entry.start, entry.end, entry.break30);
+        const rosterItem = state.roster.find(r => r.zz === entry.zz);
+        const leaderTag = rosterItem?.isLeader ? `<span class="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold">ЛИДЕР</span>` : "";
+        const disabledAttr = day.locked ? "disabled" : "";
+
+        return `
+          <div class="bg-white rounded-2xl p-3.5 shadow-sm border border-gray-200 space-y-2.5">
+            <div class="flex items-center justify-between gap-2">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="text-xs font-bold text-gray-400">${idx + 1}.</span>
+                <span class="px-2 py-0.5 rounded bg-gray-100 text-gray-800 font-mono text-xs font-bold">${entry.zz}</span>
+                ${leaderTag}
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-sm font-extrabold text-emerald-700">${hrs.toFixed(2)} ч</span>
+                ${day.locked ? "" : `<button data-del-id="${entry.id}" class="del-entry-btn text-gray-400 hover:text-rose-600 text-sm font-bold px-1">✕</button>`}
+              </div>
+            </div>
+            <div class="text-sm font-bold text-gray-900">${cleanEmployeeName(entry.name)}</div>
+            <div class="grid grid-cols-3 gap-2 items-end pt-1">
+              <div>
+                <label class="block text-[10px] font-semibold text-gray-500 mb-0.5">Начало</label>
+                <input ${disabledAttr} data-entry-id="${entry.id}" data-field="start" type="time" value="${entry.start || ""}"
+                  class="entry-time-input w-full border border-gray-300 rounded-lg px-2 py-1.5 text-xs font-semibold bg-gray-50" />
+              </div>
+              <div>
+                <label class="block text-[10px] font-semibold text-gray-500 mb-0.5">Конец</label>
+                <input ${disabledAttr} data-entry-id="${entry.id}" data-field="end" type="time" value="${entry.end || ""}"
+                  class="entry-time-input w-full border border-gray-300 rounded-lg px-2 py-1.5 text-xs font-semibold bg-gray-50" />
+              </div>
+              <label class="flex items-center justify-center gap-1.5 border border-gray-200 rounded-lg py-1.5 px-2 bg-gray-50 text-xs font-semibold cursor-pointer">
+                <input ${disabledAttr} data-entry-id="${entry.id}" type="checkbox" ${entry.break30 ? "checked" : ""} class="entry-break-input rounded text-amber-500" />
+                <span>-30м</span>
+              </label>
+            </div>
+          </div>
+        `;
+      }).join("");
+
+      container.querySelectorAll(".del-entry-btn").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const id = btn.dataset.delId;
+          day.entries = day.entries.filter(e => e.id !== id);
+          await saveData();
+          renderAll();
+        });
+      });
+
+      container.querySelectorAll(".entry-time-input").forEach(inp => {
+        inp.addEventListener("change", async () => {
+          const id = inp.dataset.entryId;
+          const field = inp.dataset.field;
+          const target = day.entries.find(e => e.id === id);
+          if (!target) return;
+          const nextStart = field === "start" ? inp.value : target.start;
+          const nextEnd = field === "end" ? inp.value : target.end;
+          const err = validateSecondShift(dateStr, target.zz, nextStart, nextEnd, id);
+          if (err) {
+            alert(err);
+            renderShiftTab();
+            return;
+          }
+          target[field] = inp.value;
+          await saveData();
+          renderAll();
+        });
+      });
+
+      container.querySelectorAll(".entry-break-input").forEach(chk => {
+        chk.addEventListener("change", async () => {
+          const id = chk.dataset.entryId;
+          const target = day.entries.find(e => e.id === id);
+          if (!target) return;
+          target.break30 = chk.checked;
+          await saveData();
+          renderAll();
+        });
+      });
+    }
+
+    function renderRosterTab() {
+      state.roster = sortRosterList(state.roster);
+      const container = document.getElementById("rosterListContainer");
+      if (!state.roster.length) {
+        container.innerHTML = `<div class="py-8 text-center text-xs text-gray-400">Список сотрудников пуст. Добавьте сотрудника или загрузите смену.</div>`;
+        return;
+      }
+
+      container.innerHTML = state.roster.map((emp, idx) => `
+        <div class="py-2.5 flex items-center justify-between gap-2">
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="text-xs font-bold text-gray-400 w-5">${idx + 1}.</span>
+            <span class="px-2 py-0.5 rounded bg-gray-100 font-mono text-xs font-bold text-gray-800">${emp.zz}</span>
+            <span class="text-xs font-semibold text-gray-900 truncate">${cleanEmployeeName(emp.name)}</span>
+          </div>
+          <div class="flex items-center gap-1.5 shrink-0">
+            ${emp.isLeader ? `
+              <button data-zz="${emp.zz}" data-dir="-1" class="move-leader-btn px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-xs font-bold">↑</button>
+              <button data-zz="${emp.zz}" data-dir="1" class="move-leader-btn px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-xs font-bold">↓</button>
+            ` : ""}
+            <button data-zz="${emp.zz}" class="toggle-leader-btn px-2.5 py-1 rounded-lg text-xs font-semibold border ${emp.isLeader ? "bg-amber-100 border-amber-300 text-amber-900" : "bg-gray-50 border-gray-200 text-gray-600"}">
+              ${emp.isLeader ? "★ Лидер" : "☆ В лидеры"}
+            </button>
+          </div>
+        </div>
+      `).join("");
+
+      container.querySelectorAll(".toggle-leader-btn").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const emp = state.roster.find(r => r.zz === btn.dataset.zz);
+          if (!emp) return;
+          emp.isLeader = !emp.isLeader;
+          emp.leaderOrder = emp.isLeader ? 0 : 999;
+          let order = 1;
+          sortRosterList(state.roster).forEach(r => {
+            if (r.isLeader) r.leaderOrder = order++;
+          });
+          await saveData();
+          renderAll();
+        });
+      });
+
+      container.querySelectorAll(".move-leader-btn").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const leaders = sortRosterList(state.roster).filter(r => r.isLeader);
+          const idx = leaders.findIndex(r => r.zz === btn.dataset.zz);
+          const dir = Number(btn.dataset.dir);
+          const swapIdx = idx + dir;
+          if (swapIdx < 0 || swapIdx >= leaders.length) return;
+          [leaders[idx], leaders[swapIdx]] = [leaders[swapIdx], leaders[idx]];
+          leaders.forEach((l, i) => { l.leaderOrder = i + 1; });
+          await saveData();
+          renderAll();
+        });
+      });
+    }
+
+    function getMonthDates(ymStr) {
+      const [y, m] = ymStr.split("-").map(Number);
+      const daysInMonth = new Date(y, m, 0).getDate();
+      const dates = [];
+      for (let d = 1; d <= daysInMonth; d++) {
+        dates.push(`${ymStr}-${String(d).padStart(2, "0")}`);
+      }
+      return dates;
+    }
+
+    function renderReportTab() {
+      const ym = reportMonthInput.value;
+      const dates = getMonthDates(ym);
+      const staff = sortRosterList(state.roster);
+
+      const staffMap = new Map(staff.map(s => [s.zz, s]));
+      dates.forEach(dt => {
+        (state.days[dt]?.entries || []).forEach(e => {
+          if (!staffMap.has(e.zz)) {
+            const obj = { zz: e.zz, name: cleanEmployeeName(e.name), isLeader: false, leaderOrder: 999 };
+            staff.push(obj);
+            staffMap.set(e.zz, obj);
+          }
+        });
+      });
+
+      let monthMonSat = 0;
+      let monthSun = 0;
+
+      const dailyTotals = {};
+      dates.forEach(dt => {
+        let sum = 0;
+        (state.days[dt]?.entries || []).forEach(e => {
+          const h = calcNetHours(e.start, e.end, e.break30);
+          sum += h;
+          if (isSunday(dt)) monthSun += h;
+          else monthMonSat += h;
+        });
+        dailyTotals[dt] = sum;
+      });
+
+      document.getElementById("monthMonSatTotal").textContent = `${monthMonSat.toFixed(2)} ч`;
+      document.getElementById("monthSunTotal").textContent = `${monthSun.toFixed(2)} ч`;
+      document.getElementById("monthGrandTotal").textContent = `${(monthMonSat + monthSun).toFixed(2)} ч`;
+
+      const wrapper = document.getElementById("reportTableWrapper");
+      if (!staff.length) {
+        wrapper.innerHTML = `<div class="p-8 text-center text-xs text-gray-400">Нет данных за выбранный месяц.</div>`;
+        return;
+      }
+
+      let html = `<table class="border-collapse text-[11px] whitespace-nowrap">
+        <thead>
+          <tr class="bg-gray-900 text-white">
+            <th class="sticky-head-1 sticky-col-1 corner-z bg-gray-900 px-2 py-2 border border-gray-700 w-9">№</th>
+            <th class="sticky-head-1 sticky-col-2 corner-z bg-gray-900 px-2 py-2 border border-gray-700 w-18">ZZ</th>
+            <th class="sticky-head-1 sticky-col-3 corner-z bg-gray-900 px-2 py-2 border border-gray-700 min-w-[140px] text-left">Сотрудник</th>
+            <th class="sticky-head-1 bg-blue-950 px-2 py-2 border border-gray-700">Пн–Сб</th>
+            <th class="sticky-head-1 bg-amber-950 px-2 py-2 border border-gray-700">Вс</th>
+            <th class="sticky-head-1 bg-emerald-950 px-2 py-2 border border-gray-700">Итого</th>
+            ${dates.map(dt => {
+              const sun = isSunday(dt);
+              return `<th colspan="3" class="sticky-head-1 px-2 py-2 border border-gray-700 ${sun ? "bg-amber-800" : "bg-gray-900"}">${dt.slice(8, 10)}.${dt.slice(5, 7)} ${sun ? "(Вс)" : ""}</th>`;
+            }).join("")}
+          </tr>
+          <tr class="bg-gray-800 text-amber-300 font-bold">
+            <th class="sticky-head-2 sticky-col-1 corner-z bg-gray-800 px-2 py-1 border border-gray-700"></th>
+            <th class="sticky-head-2 sticky-col-2 corner-z bg-gray-800 px-2 py-1 border border-gray-700"></th>
+            <th class="sticky-head-2 sticky-col-3 corner-z bg-gray-800 px-2 py-1 border border-gray-700 text-left">Сумма за день:</th>
+            <th class="sticky-head-2 bg-gray-800 px-2 py-1 border border-gray-700">${monthMonSat.toFixed(1)}</th>
+            <th class="sticky-head-2 bg-gray-800 px-2 py-1 border border-gray-700">${monthSun.toFixed(1)}</th>
+            <th class="sticky-head-2 bg-gray-800 px-2 py-1 border border-gray-700">${(monthMonSat + monthSun).toFixed(1)}</th>
+            ${dates.map(dt => `<th colspan="3" class="sticky-head-2 bg-gray-800 px-2 py-1 border border-gray-700">${dailyTotals[dt] > 0 ? dailyTotals[dt].toFixed(2) + " ч" : "—"}</th>`).join("")}
+          </tr>
+          <tr class="bg-gray-100 text-gray-700 font-semibold">
+            <th class="sticky-head-3 sticky-col-1 corner-z bg-gray-100 px-2 py-1 border border-gray-300"></th>
+            <th class="sticky-head-3 sticky-col-2 corner-z bg-gray-100 px-2 py-1 border border-gray-300"></th>
+            <th class="sticky-head-3 sticky-col-3 corner-z bg-gray-100 px-2 py-1 border border-gray-300"></th>
+            <th class="sticky-head-3 bg-gray-100 px-2 py-1 border border-gray-300"></th>
+            <th class="sticky-head-3 bg-gray-100 px-2 py-1 border border-gray-300"></th>
+            <th class="sticky-head-3 bg-gray-100 px-2 py-1 border border-gray-300"></th>
+            ${dates.map(() => `
+              <th class="sticky-head-3 bg-gray-100 px-1.5 py-1 border border-gray-300">Нач</th>
+              <th class="sticky-head-3 bg-gray-100 px-1.5 py-1 border border-gray-300">Кон</th>
+              <th class="sticky-head-3 bg-gray-100 px-1.5 py-1 border border-gray-300">Часы</th>
+            `).join("")}
+          </tr>
+        </thead>
+        <tbody>`;
+
+      staff.forEach((emp, idx) => {
+        let empMonSat = 0;
+        let empSun = 0;
+        const cells = dates.map(dt => {
+          const entries = (state.days[dt]?.entries || []).filter(e => e.zz === emp.zz);
+          if (!entries.length) {
+            return `<td class="px-1.5 py-1.5 border border-gray-200 text-center text-gray-300">—</td>
+                    <td class="px-1.5 py-1.5 border border-gray-200 text-center text-gray-300">—</td>
+                    <td class="px-1.5 py-1.5 border border-gray-200 text-center text-gray-300">0</td>`;
+          }
+          const h = entries.reduce((acc, e) => acc + calcNetHours(e.start, e.end, e.break30), 0);
+          if (isSunday(dt)) empSun += h;
+          else empMonSat += h;
+
+          const starts = entries.map(e => e.start).join("/");
+          const ends = entries.map(e => e.end).join("/");
+          return `<td class="px-1.5 py-1.5 border border-gray-200 text-center">${starts}</td>
+                  <td class="px-1.5 py-1.5 border border-gray-200 text-center">${ends}</td>
+                  <td class="px-1.5 py-1.5 border border-gray-200 text-center font-bold text-emerald-700">${h.toFixed(2)}</td>`;
+        }).join("");
+
+        const rowBg = idx % 2 === 0 ? "bg-white" : "bg-gray-50";
+        html += `<tr class="${rowBg}">
+          <td class="sticky-col-1 ${rowBg} px-2 py-1.5 border border-gray-200 text-center font-bold text-gray-500">${idx + 1}</td>
+          <td class="sticky-col-2 ${rowBg} px-2 py-1.5 border border-gray-200 font-mono font-bold">${emp.zz}</td>
+          <td class="sticky-col-3 ${rowBg} px-2 py-1.5 border border-gray-200 font-semibold">${cleanEmployeeName(emp.name)}</td>
+          <td class="px-2 py-1.5 border border-gray-200 text-center font-bold text-blue-700">${empMonSat.toFixed(2)}</td>
+          <td class="px-2 py-1.5 border border-gray-200 text-center font-bold text-amber-700">${empSun.toFixed(2)}</td>
+          <td class="px-2 py-1.5 border border-gray-200 text-center font-extrabold text-emerald-700">${(empMonSat + empSun).toFixed(2)}</td>
+          ${cells}
+        </tr>`;
+      });
+
+      html += `</tbody></table>`;
+      wrapper.innerHTML = html;
+    }
+
+    function renderAll() {
+      renderShiftTab();
+      renderRosterTab();
+      renderReportTab();
+    }
+
+    // --- EXCEL EXPORT ---
+    document.getElementById("exportExcelBtn").addEventListener("click", () => {
+      const ym = reportMonthInput.value;
+      const dates = getMonthDates(ym);
+      const staff = sortRosterList(state.roster);
+
+      const header1 = ["№", "ZZ", "Сотрудник", "Пн–Сб (ч)", "Вс (ч)", "Итого (ч)"];
+      const header2 = ["", "", "", "", "", ""];
+      dates.forEach(dt => {
+        const label = `${dt.slice(8, 10)}.${dt.slice(5, 7)}${isSunday(dt) ? " (Вс)" : ""}`;
+        header1.push(label, "", "");
+        header2.push("Начало", "Конец", "Часы");
+      });
+
+      const rows = [header1, header2];
+      staff.forEach((emp, idx) => {
+        let empMonSat = 0;
+        let empSun = 0;
+        const dayCells = [];
+        dates.forEach(dt => {
+          const entries = (state.days[dt]?.entries || []).filter(e => e.zz === emp.zz);
+          if (!entries.length) {
+            dayCells.push("", "", 0);
+          } else {
+            const h = entries.reduce((acc, e) => acc + calcNetHours(e.start, e.end, e.break30), 0);
+            if (isSunday(dt)) empSun += h;
+            else empMonSat += h;
+            dayCells.push(entries.map(e => e.start).join("/"), entries.map(e => e.end).join("/"), Number(h.toFixed(2)));
+          }
+        });
+        rows.push([
+          idx + 1,
+          emp.zz,
+          cleanEmployeeName(emp.name),
+          Number(empMonSat.toFixed(2)),
+          Number(empSun.toFixed(2)),
+          Number((empMonSat + empSun).toFixed(2)),
+          ...dayCells
+        ]);
+      });
+
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, `Табель_${ym}`);
+      XLSX.writeFile(wb, `SKAYN_Tabel_${ym}.xlsx`);
+    });
+
+    // --- TABS & MODALS ---
+    document.querySelectorAll(".tab-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".tab-btn").forEach(b => {
+          b.classList.remove("border-amber-400", "text-amber-400");
+          b.classList.add("border-transparent", "text-gray-400");
+        });
+        btn.classList.add("border-amber-400", "text-amber-400");
+        btn.classList.remove("border-transparent", "text-gray-400");
+
+        document.querySelectorAll(".tab-panel").forEach(p => p.classList.add("hidden"));
+        document.getElementById(`tab-${btn.dataset.tab}`).classList.remove("hidden");
+        renderAll();
+      });
+    });
+
+    document.querySelectorAll(".close-modal").forEach(btn => {
+      btn.addEventListener("click", () => {
+        btn.closest(".fixed").classList.add("hidden");
+      });
+    });
+
+    // Settings Modal
+    document.getElementById("openSettingsBtn").addEventListener("click", () => {
+      document.getElementById("geminiKeyInput").value = localStorage.getItem(LS_KEYS.GEMINI) || DEFAULT_APP_CONFIG.geminiApiKey || "";
+      document.getElementById("sbUrlInput").value = localStorage.getItem(LS_KEYS.SB_URL) || "";
+      document.getElementById("sbKeyInput").value = localStorage.getItem(LS_KEYS.SB_KEY) || "";
+      document.getElementById("sbPassInput").value = localStorage.getItem(LS_KEYS.SB_PASS) || "";
+      document.getElementById("geminiTestResult").classList.add("hidden");
+      document.getElementById("settingsModal").classList.remove("hidden");
+    });
+
+    document.getElementById("testGeminiKeyBtn").addEventListener("click", async () => {
+      const key = document.getElementById("geminiKeyInput").value.trim();
+      const resEl = document.getElementById("geminiTestResult");
+      resEl.classList.remove("hidden", "text-emerald-700", "text-rose-600", "text-gray-600");
+      if (!key) {
+        resEl.classList.add("text-rose-600");
+        resEl.textContent = "Введите ключ перед проверкой.";
+        return;
+      }
+      resEl.classList.add("text-gray-600");
+      resEl.textContent = "Проверяем ключ...";
+      try {
+        const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${encodeURIComponent(key)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contents: [{ parts: [{ text: "Ответь одним словом: OK" }] }] })
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data?.error?.message || `HTTP ${resp.status}`);
+        resEl.classList.remove("text-gray-600");
+        resEl.classList.add("text-emerald-700");
+        resEl.textContent = "✅ Ключ рабочий! Можно сохранять настройки.";
+      } catch (e) {
+        resEl.classList.remove("text-gray-600");
+        resEl.classList.add("text-rose-600");
+        resEl.textContent = "❌ Ошибка ключа: " + e.message;
+      }
+    });
+
+    document.getElementById("copySetupLinkBtn").addEventListener("click", async () => {
+      const cfg = {
+        u: document.getElementById("sbUrlInput").value.trim(),
+        k: document.getElementById("sbKeyInput").value.trim(),
+        p: document.getElementById("sbPassInput").value.trim(),
+        g: document.getElementById("geminiKeyInput").value.trim(),
+        w: state.workspace
+      };
+      const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(cfg)))).replace(/\+/g, "-").replace(/\//g, "_");
+      const link = location.origin + location.pathname + "#cfg=" + encodeURIComponent(b64);
+      try { await navigator.clipboard.writeText(link); alert("Ссылка скопирована. Откройте её на другом телефоне — настройки применятся сами."); }
+      catch (e) { prompt("Скопируйте ссылку:", link); }
+    });
+
+    document.getElementById("saveSettingsBtn").addEventListener("click", () => {
+      const gKey = document.getElementById("geminiKeyInput").value.trim();
+      [["sbUrlInput", LS_KEYS.SB_URL], ["sbKeyInput", LS_KEYS.SB_KEY], ["sbPassInput", LS_KEYS.SB_PASS]].forEach(([id, k]) => {
+        const v = document.getElementById(id).value.trim();
+        if (v) localStorage.setItem(k, v); else localStorage.removeItem(k);
+      });
+
+      if (gKey) localStorage.setItem(LS_KEYS.GEMINI, gKey);
+      else localStorage.removeItem(LS_KEYS.GEMINI);
+
+      document.getElementById("settingsModal").classList.add("hidden");
+      initSupabaseSync();
+    });
+
+    // JSON Backup & Restore
+    document.getElementById("exportJsonBtn").addEventListener("click", () => {
+      const blob = new Blob([JSON.stringify({ workspace: state.workspace, roster: state.roster, days: state.days }, null, 2)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `SKAYN_Backup_${state.workspace}_${todayIso}.json`;
+      a.click();
+    });
+
+    document.getElementById("importJsonInput").addEventListener("change", (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          const parsed = JSON.parse(reader.result);
+          state.roster = sortRosterList(parsed.roster || []);
+          state.days = parsed.days || {};
+          await saveData();
+          renderAll();
+          alert("Резервная копия успешно восстановлена!");
+        } catch (err) {
+          alert("Ошибка чтения JSON-файла: " + err.message);
+        }
+      };
+      reader.readAsText(file);
+    });
+
+    // Workspace switching
+    workspaceInput.addEventListener("change", () => {
+      const nextWs = workspaceInput.value.trim().toUpperCase() || "SHIFT-1";
+      workspaceInput.value = nextWs;
+      state.workspace = nextWs;
+      localStorage.setItem(LS_KEYS.WORKSPACE, nextWs);
+      loadLocalData();
+      renderAll();
+      initSupabaseSync();
+    });
+
+    // Shift controls
+    shiftDateInput.addEventListener("change", renderShiftTab);
+    reportMonthInput.addEventListener("change", renderReportTab);
+
+    document.getElementById("toggleDayLockBtn").addEventListener("click", async () => {
+      const day = ensureDay(shiftDateInput.value);
+      day.locked = !day.locked;
+      await saveData();
+      renderShiftTab();
+    });
+
+    document.getElementById("applyBulkTimeBtn").addEventListener("click", async () => {
+      const day = ensureDay(shiftDateInput.value);
+      if (day.locked) return alert("День закрыт.");
+      const s = document.getElementById("bulkStartInput").value;
+      const e = document.getElementById("bulkEndInput").value;
+      day.entries.forEach(item => {
+        item.start = s;
+        item.end = e;
+      });
+      await saveData();
+      renderAll();
+    });
+
+    document.getElementById("clearDayBtn").addEventListener("click", async () => {
+      const day = ensureDay(shiftDateInput.value);
+      if (day.locked) return alert("День закрыт.");
+      if (!confirm("Удалить все записи за выбранный день?")) return;
+      day.entries = [];
+      await saveData();
+      renderAll();
+    });
+
+    document.getElementById("fillTestBtn").addEventListener("click", async () => {
+      const dateStr = shiftDateInput.value;
+      const day = ensureDay(dateStr);
+      if (day.locked) return alert("День закрыт.");
+      for (let i = 1; i <= 20; i++) {
+        const zz = `ZZ00${340 + i}`;
+        const name = i === 1 ? "Yevhen Sukhodub" : `Employee ${i}`;
+        upsertRosterMember(zz, name);
+        if (!day.entries.some(e => e.zz === zz)) {
+          day.entries.push({
+            id: String(Date.now() + i),
+            zz,
+            name,
+            start: "06:00",
+            end: "18:00",
+            break30: true
+          });
+        }
+      }
+      await saveData();
+      renderAll();
+    });
+
+    // OCR file inputs
+    document.getElementById("ocrCameraInput").addEventListener("change", async (e) => {
+      const f = e.target.files?.[0];
+      e.target.value = "";
+      await handleOcrFile(f);
+    });
+
+    document.getElementById("ocrGalleryInput").addEventListener("change", async (e) => {
+      const f = e.target.files?.[0];
+      e.target.value = "";
+      await handleOcrFile(f);
+    });
+
+    // Manual Entry Modal
+    document.getElementById("openManualBtn").addEventListener("click", () => {
+      const day = ensureDay(shiftDateInput.value);
+      if (day.locked) return alert("День закрыт.");
+      const sel = document.getElementById("manualRosterSelect");
+      sel.innerHTML = `<option value="">-- Новый / ввести ниже --</option>` +
+        sortRosterList(state.roster).map(r => `<option value="${r.zz}">${r.zz} — ${cleanEmployeeName(r.name)}</option>`).join("");
+      document.getElementById("manualZzInput").value = "";
+      document.getElementById("manualNameInput").value = "";
+      document.getElementById("manualModal").classList.remove("hidden");
+    });
+
+    document.getElementById("manualRosterSelect").addEventListener("change", (e) => {
+      const emp = state.roster.find(r => r.zz === e.target.value);
+      if (emp) {
+        document.getElementById("manualZzInput").value = emp.zz;
+        document.getElementById("manualNameInput").value = cleanEmployeeName(emp.name);
+      }
+    });
+
+    document.getElementById("saveManualShiftBtn").addEventListener("click", async () => {
+      const dateStr = shiftDateInput.value;
+      const day = ensureDay(dateStr);
+      const zz = document.getElementById("manualZzInput").value.trim().toUpperCase();
+      const name = cleanEmployeeName(document.getElementById("manualNameInput").value);
+      const start = document.getElementById("manualStartInput").value;
+      const end = document.getElementById("manualEndInput").value;
+      const break30 = document.getElementById("manualBreakInput").checked;
+
+      if (!zz || !name) return alert("Укажите номер ZZ и Имя Фамилию.");
+      const err = validateSecondShift(dateStr, zz, start, end);
+      if (err) return alert(err);
+
+      upsertRosterMember(zz, name);
+      day.entries.push({
+        id: String(Date.now()),
+        zz,
+        name,
+        start,
+        end,
+        break30
+      });
+      await saveData();
+      document.getElementById("manualModal").classList.add("hidden");
+      renderAll();
+    });
+
+    document.getElementById("addEmployeeRosterBtn").addEventListener("click", async () => {
+      const zz = prompt("Введите номер ZZ (например, ZZ00345):");
+      if (!zz) return;
+      const name = prompt("Введите Имя и Фамилию:");
+      if (!name) return;
+      upsertRosterMember(zz, name);
+      await saveData();
+      renderAll();
+    });
+
+    // QR Scanner
+    function stopQrScanner() {
+      if (qrAnimFrame) cancelAnimationFrame(qrAnimFrame);
+      qrAnimFrame = null;
+      if (qrStream) {
+        qrStream.getTracks().forEach(t => t.stop());
+        qrStream = null;
+      }
+      document.getElementById("qrModal").classList.add("hidden");
+    }
+
+    document.getElementById("closeQrBtn").addEventListener("click", stopQrScanner);
+
+    document.getElementById("openQrBtn").addEventListener("click", async () => {
+      const day = ensureDay(shiftDateInput.value);
+      if (day.locked) return alert("День закрыт.");
+      document.getElementById("qrModal").classList.remove("hidden");
+      const video = document.getElementById("qrVideo");
+      const canvas = document.getElementById("qrCanvas");
+      const ctx = canvas.getContext("2d");
+
+      try {
+        qrStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        video.srcObject = qrStream;
+        await video.play();
+
+        const tick = async () => {
+          if (!qrStream) return;
+          if (video.readyState === video.HAVE_ENOUGH_DATA) {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const code = jsQR(imgData.data, imgData.width, imgData.height);
+            if (code && code.data) {
+              const parsed = parseQrPayload(code.data);
+              if (parsed) {
+                stopQrScanner();
+                const err = validateSecondShift(shiftDateInput.value, parsed.zz, "06:00", "18:00");
+                if (err) {
+                  alert(`${parsed.zz} (${parsed.name}): ${err}`);
+                  return;
+                }
+                upsertRosterMember(parsed.zz, parsed.name);
+                day.entries.push({
+                  id: String(Date.now()),
+                  zz: parsed.zz,
+                  name: parsed.name,
+                  start: "06:00",
+                  end: "18:00",
+                  break30: true
+                });
+                await saveData();
+                renderAll();
+                return;
+              }
+            }
+          }
+          qrAnimFrame = requestAnimationFrame(tick);
+        };
+        qrAnimFrame = requestAnimationFrame(tick);
+      } catch (err) {
+        stopQrScanner();
+        alert("Не удалось открыть камеру для QR-сканера: " + err.message);
+      }
+    });
+
+    // Boot
+    loadLocalData();
+    renderAll();
+    initSupabaseSync();
+  </script>
+</body>
+</html>
