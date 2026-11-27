@@ -16,8 +16,10 @@
       -webkit-tap-highlight-color: transparent;
     }
     .sticky-col-1 { position: sticky; left: 0; z-index: 20; background: inherit; }
-    .sticky-col-2 { position: sticky; left: 36px; z-index: 20; background: inherit; }
-    .sticky-col-3 { position: sticky; left: 108px; z-index: 20; background: inherit; }
+    .sticky-col-2 { position: sticky; left: 36px; z-index: 20; background: inherit; width: 80px !important; min-width: 80px !important; }
+    .sticky-col-3 { position: sticky; left: 116px !important; z-index: 20; background: inherit; min-width: 200px !important; }
+    .sticky-col-1 { min-width: 36px !important; }
+    table.border-collapse tr > :nth-child(n+4):nth-child(-n+6) { min-width: 64px; }
     .sticky-head-1 { position: sticky; top: 0; z-index: 30; }
     .sticky-head-2 { position: sticky; top: 30px; z-index: 30; }
     .sticky-head-3 { position: sticky; top: 56px; z-index: 30; }
@@ -45,6 +47,9 @@
       <div class="flex items-center gap-2">
         <input id="workspaceInput" type="text" value="SHIFT-1" placeholder="Код пространства"
           class="bg-gray-800 border border-gray-700 text-amber-300 font-mono text-xs rounded-lg px-2.5 py-2 w-28 focus:outline-none focus:border-amber-400" />
+        <select id="langSelect" class="bg-gray-800 border border-gray-700 text-gray-200 text-xs rounded-lg px-1.5 py-2" aria-label="Language">
+          <option value="ru">RU</option><option value="uk">UA</option><option value="pl">PL</option><option value="en">EN</option>
+        </select>
         <button id="openSettingsBtn"
           class="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 text-xs font-medium px-3 py-2 rounded-lg flex items-center gap-1.5">
           <span>⚙</span><span>Настройки</span>
@@ -230,6 +235,13 @@
       </button>
       <p class="text-[10px] text-gray-500 -mt-2">В ссылке — ключи и пароль. Отправляйте только в личные сообщения.</p>
 
+      <div class="space-y-1">
+        <label class="block text-xs font-bold text-gray-700">🗂 Резервные копии (авто):</label>
+        <select id="snapSelect" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs"></select>
+        <button id="restoreSnapBtn" class="w-full bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-bold py-2.5 px-3 rounded-xl border border-amber-200">♻ Восстановить выбранную копию</button>
+        <p class="text-[10px] text-gray-500">Копии на телефоне — раз в 6 часов (последние 10). Облачные — почасовые за 30 дней.</p>
+      </div>
+
       <div class="grid grid-cols-2 gap-2 pt-1">
         <button id="exportJsonBtn" class="bg-gray-100 hover:bg-gray-200 text-gray-800 text-xs font-semibold py-2.5 px-3 rounded-xl border border-gray-300">
           💾 Скачать бэкап JSON
@@ -261,6 +273,7 @@
         </select>
       </div>
 
+      <p class="text-[11px] text-gray-500">Достаточно номера ZZ (например, 345) — имя подставится из базы.</p>
       <div class="grid grid-cols-3 gap-2">
         <div>
           <label class="block text-xs font-bold text-gray-700 mb-1">Номер ZZ</label>
@@ -291,6 +304,7 @@
       <button id="saveManualShiftBtn" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm py-2.5 rounded-xl mt-2">
         Добавить в смену
       </button>
+      <p id="manualMsg" class="text-xs font-semibold text-emerald-700 min-h-[1rem]"></p>
     </div>
   </div>
 
@@ -500,6 +514,7 @@
         updatedAt: Date.now()
       }));
 
+      takeSnapshot(false);
       if (sb && !isRemoteApplying) await pushRemote();
     }
 
@@ -913,7 +928,7 @@
           <div class="flex items-center gap-2 min-w-0">
             <span class="text-xs font-bold text-gray-400 w-5">${idx + 1}.</span>
             <span class="px-2 py-0.5 rounded bg-gray-100 font-mono text-xs font-bold text-gray-800">${emp.zz}</span>
-            <span class="text-xs font-semibold text-gray-900 truncate">${cleanEmployeeName(emp.name)}</span>
+            <span class="text-xs font-semibold text-gray-900 break-words leading-snug">${cleanEmployeeName(emp.name)}</span>
           </div>
           <div class="flex items-center gap-1.5 shrink-0">
             ${emp.isLeader ? `
@@ -1105,6 +1120,11 @@
       });
 
       const rows = [header1, header2];
+      const hrsCol = i => 6 + i * 3 + 2;                 // колонка «Часы» для i-го дня
+      const ref = (r, c) => XLSX.utils.encode_cell({ r, c });
+      const sunIdx = dates.map((dt, i) => i).filter(i => isSunday(dates[i]));
+      const monIdx = dates.map((dt, i) => i).filter(i => !isSunday(dates[i]));
+      const sumF = (r, idxs) => idxs.length ? "SUM(" + idxs.map(i => ref(r, hrsCol(i))).join(",") + ")" : "0";
       staff.forEach((emp, idx) => {
         let empMonSat = 0;
         let empSun = 0;
@@ -1120,18 +1140,28 @@
             dayCells.push(entries.map(e => e.start).join("/"), entries.map(e => e.end).join("/"), Number(h.toFixed(2)));
           }
         });
+        const r = rows.length; // номер строки (с нуля) в листе
         rows.push([
           idx + 1,
           emp.zz,
           cleanEmployeeName(emp.name),
-          Number(empMonSat.toFixed(2)),
-          Number(empSun.toFixed(2)),
-          Number((empMonSat + empSun).toFixed(2)),
+          { t: "n", v: Number(empMonSat.toFixed(2)), f: sumF(r, monIdx) },
+          { t: "n", v: Number(empSun.toFixed(2)), f: sumF(r, sunIdx) },
+          { t: "n", v: Number((empMonSat + empSun).toFixed(2)), f: ref(r, 3) + "+" + ref(r, 4) },
           ...dayCells
         ]);
       });
+      // строка «Итого» с живыми формулами по колонкам
+      if (staff.length) {
+        const first = 2, last = rows.length - 1, tr = rows.length;
+        const colSum = c => ({ t: "n", f: "SUM(" + ref(first, c) + ":" + ref(last, c) + ")" });
+        const total = ["", "", "ИТОГО", colSum(3), colSum(4), colSum(5)];
+        dates.forEach((dt, i) => total.push("", "", colSum(hrsCol(i))));
+        rows.push(total);
+      }
 
       const ws = XLSX.utils.aoa_to_sheet(rows);
+      ws["!cols"] = [{ wch: 4 }, { wch: 10 }, { wch: 28 }, { wch: 11 }, { wch: 9 }, { wch: 11 }, ...dates.flatMap(() => [{ wch: 8 }, { wch: 8 }, { wch: 7 }])];
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, `Табель_${ym}`);
       XLSX.writeFile(wb, `SKAYN_Tabel_${ym}.xlsx`);
@@ -1161,6 +1191,7 @@
 
     // Settings Modal
     document.getElementById("openSettingsBtn").addEventListener("click", () => {
+      refreshSnapList();
       document.getElementById("geminiKeyInput").value = localStorage.getItem(LS_KEYS.GEMINI) || DEFAULT_APP_CONFIG.geminiApiKey || "";
       document.getElementById("sbUrlInput").value = localStorage.getItem(LS_KEYS.SB_URL) || "";
       document.getElementById("sbKeyInput").value = localStorage.getItem(LS_KEYS.SB_KEY) || "";
@@ -1242,6 +1273,7 @@
       reader.onload = async () => {
         try {
           const parsed = JSON.parse(reader.result);
+          takeSnapshot(true);
           state.roster = sortRosterList(parsed.roster || []);
           state.days = parsed.days || {};
           await saveData();
@@ -1293,6 +1325,7 @@
       const day = ensureDay(shiftDateInput.value);
       if (day.locked) return alert("День закрыт.");
       if (!confirm("Удалить все записи за выбранный день?")) return;
+      takeSnapshot(true);
       day.entries = [];
       await saveData();
       renderAll();
@@ -1334,51 +1367,56 @@
       await handleOcrFile(f);
     });
 
-    // Manual Entry Modal
+    // Manual Entry Modal (быстрое добавление по номеру ZZ)
+    const zzIn = document.getElementById("manualZzInput");
+    const nameIn = document.getElementById("manualNameInput");
+    const manualMsg = document.getElementById("manualMsg");
     document.getElementById("openManualBtn").addEventListener("click", () => {
       const day = ensureDay(shiftDateInput.value);
       if (day.locked) return alert("День закрыт.");
       const sel = document.getElementById("manualRosterSelect");
       sel.innerHTML = `<option value="">-- Новый / ввести ниже --</option>` +
         sortRosterList(state.roster).map(r => `<option value="${r.zz}">${r.zz} — ${cleanEmployeeName(r.name)}</option>`).join("");
-      document.getElementById("manualZzInput").value = "";
-      document.getElementById("manualNameInput").value = "";
+      zzIn.value = ""; nameIn.value = ""; nameIn.dataset.auto = ""; manualMsg.textContent = "";
       document.getElementById("manualModal").classList.remove("hidden");
+      setTimeout(() => zzIn.focus(), 60);
     });
 
     document.getElementById("manualRosterSelect").addEventListener("change", (e) => {
       const emp = state.roster.find(r => r.zz === e.target.value);
-      if (emp) {
-        document.getElementById("manualZzInput").value = emp.zz;
-        document.getElementById("manualNameInput").value = cleanEmployeeName(emp.name);
-      }
+      if (emp) { zzIn.value = emp.zz; nameIn.value = cleanEmployeeName(emp.name); }
     });
+
+    zzIn.addEventListener("input", () => {
+      const emp = state.roster.find(r => r.zz === normZz(zzIn.value));
+      if (emp) { nameIn.value = cleanEmployeeName(emp.name); nameIn.dataset.auto = "1"; }
+      else if (nameIn.dataset.auto === "1") { nameIn.value = ""; nameIn.dataset.auto = ""; }
+    });
+    nameIn.addEventListener("input", () => { nameIn.dataset.auto = ""; });
+    zzIn.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); document.getElementById("saveManualShiftBtn").click(); } });
 
     document.getElementById("saveManualShiftBtn").addEventListener("click", async () => {
       const dateStr = shiftDateInput.value;
       const day = ensureDay(dateStr);
-      const zz = document.getElementById("manualZzInput").value.trim().toUpperCase();
-      const name = cleanEmployeeName(document.getElementById("manualNameInput").value);
+      const zz = normZz(zzIn.value);
+      const emp = state.roster.find(r => r.zz === zz);
+      const name = cleanEmployeeName(nameIn.value) || (emp ? cleanEmployeeName(emp.name) : "");
       const start = document.getElementById("manualStartInput").value;
       const end = document.getElementById("manualEndInput").value;
       const break30 = document.getElementById("manualBreakInput").checked;
 
-      if (!zz || !name) return alert("Укажите номер ZZ и Имя Фамилию.");
+      if (!zz) return alert("Укажите номер ZZ.");
+      if (!name) { nameIn.focus(); return alert("Номера ZZ нет в базе — введите Имя и Фамилию один раз."); }
       const err = validateSecondShift(dateStr, zz, start, end);
       if (err) return alert(err);
 
       upsertRosterMember(zz, name);
-      day.entries.push({
-        id: String(Date.now()),
-        zz,
-        name,
-        start,
-        end,
-        break30
-      });
+      day.entries.push({ id: String(Date.now()), zz, name, start, end, break30 });
       await saveData();
-      document.getElementById("manualModal").classList.add("hidden");
       renderAll();
+      manualMsg.textContent = "✅ " + zz + " — " + name;
+      zzIn.value = ""; nameIn.value = ""; nameIn.dataset.auto = "";
+      zzIn.focus();
     });
 
     document.getElementById("addEmployeeRosterBtn").addEventListener("click", async () => {
@@ -1386,7 +1424,7 @@
       if (!zz) return;
       const name = prompt("Введите Имя и Фамилию:");
       if (!name) return;
-      upsertRosterMember(zz, name);
+      upsertRosterMember(normZz(zz), name);
       await saveData();
       renderAll();
     });
@@ -1458,10 +1496,268 @@
       }
     });
 
+    // ===== Утилиты: номер ZZ и резервные копии =====
+    function normZz(v) {
+      const t = String(v || "").trim().toUpperCase().replace(/\s+/g, "");
+      const m = t.match(/^(?:ZZ)?0*(\d{1,6})$/);
+      return m ? "ZZ" + m[1].padStart(5, "0") : t;
+    }
+    const SNAP_KEY = () => "skayn_snaps_" + state.workspace;
+    function getSnaps() { try { return JSON.parse(localStorage.getItem(SNAP_KEY()) || "[]"); } catch (e) { return []; } }
+    function takeSnapshot(force) {
+      try {
+        if (!state.roster.length && !Object.keys(state.days).length) return;
+        const a = getSnaps();
+        if (!force && a[0] && Date.now() - a[0].t < 6 * 3600e3) return;
+        a.unshift({ t: Date.now(), roster: state.roster, days: state.days });
+        localStorage.setItem(SNAP_KEY(), JSON.stringify(a.slice(0, 10)));
+      } catch (e) { /* память телефона заполнена — пропускаем */ }
+    }
+    async function refreshSnapList() {
+      const sel = document.getElementById("snapSelect");
+      if (!sel) return;
+      sel.innerHTML = getSnaps().map((x, i) => `<option value="L${i}">📱 ${new Date(x.t).toLocaleString()}</option>`).join("") || `<option value="">—</option>`;
+      if (!sb) return;
+      try {
+        const { data } = await sb.rpc("list_history", { p_name: state.workspace, p_pass: sbCfg().pass });
+        if (data && data.ok && data.items) sel.innerHTML += data.items.map(b => `<option value="C${b}">☁ ${new Date(b).toLocaleString()}</option>`).join("");
+      } catch (e) { /* история в облаке ещё не включена */ }
+    }
+    document.getElementById("restoreSnapBtn").addEventListener("click", async () => {
+      const v = document.getElementById("snapSelect").value;
+      if (!v) return;
+      if (!confirm("Заменить текущие данные выбранной копией? Текущие данные сохранятся как новая копия на телефоне.")) return;
+      let snap = null;
+      if (v[0] === "L") snap = getSnaps()[+v.slice(1)];
+      else {
+        const { data } = await sb.rpc("get_history", { p_name: state.workspace, p_pass: sbCfg().pass, p_bucket: v.slice(1) });
+        if (data && data.ok) snap = data; else return alert("Не удалось загрузить копию из облака.");
+      }
+      if (!snap) return;
+      takeSnapshot(true);
+      state.roster = sortRosterList(snap.roster || []);
+      state.days = snap.days || {};
+      await saveData(); renderAll(); refreshSnapList();
+      alert("Резервная копия успешно восстановлена!");
+    });
+
+    // ===== Языки: RU / UA / PL / EN =====
+    const I18N_RAW = `SKAYN • Учёт смен|SKAYN • Облік змін|SKAYN • Ewidencja zmian|SKAYN • Shift Tracker
+Настройки|Налаштування|Ustawienia|Settings
+1. Смена (День / Ночь)|1. Зміна (День / Ніч)|1. Zmiana (Dzień / Noc)|1. Shift (Day / Night)
+2. База и порядок (Лидеры)|2. База та порядок (Лідери)|2. Baza i kolejność (Liderzy)|2. Roster & order (Leaders)
+3. Табель за месяц / Excel|3. Табель за місяць / Excel|3. Ewidencja miesięczna / Excel|3. Monthly timesheet / Excel
+Локально • Облако не подключено|Локально • Хмара не підключена|Lokalnie • Brak chmury|Local • Cloud not connected
+Введите пароль смены в ⚙ Настройках|Введіть пароль зміни в ⚙ Налаштуваннях|Wpisz hasło zmiany w ⚙ Ustawieniach|Enter the shift password in ⚙ Settings
+Подключение к облаку...|Підключення до хмари...|Łączenie z chmurą...|Connecting to cloud...
+Неверный пароль или название смены|Невірний пароль або назва зміни|Błędne hasło lub nazwa zmiany|Wrong password or shift name
+Ошибка сети Supabase|Помилка мережі Supabase|Błąd sieci Supabase|Supabase network error
+Ошибка записи в облако|Помилка запису в хмару|Błąd zapisu do chmury|Cloud write error
+Дата начала смены:|Дата початку зміни:|Data rozpoczęcia zmiany:|Shift start date:
+Месяц отчёта:|Місяць звіту:|Miesiąc raportu:|Report month:
+Массово:|Масово:|Zbiorczo:|Bulk:
+Всем|Всім|Wszystkim|All
+Очистить день|Очистити день|Wyczyść dzień|Clear day
+Выходов в смену|Виходів у зміну|Wyjść na zmianę|Shift check-ins
+Чистых часов (-30м)|Чистих годин (-30хв)|Czysta liczba godzin (-30 min)|Net hours (-30m)
+Категория дня|Категорія дня|Kategoria dnia|Day category
+Пн–Сб|Пн–Сб|Pn–Sob|Mon–Sat
+Вс|Нд|Nd|Sun
+Воскресенье (Вс)|Неділя (Нд)|Niedziela (Nd)|Sunday (Sun)
+Всего часов Пн–Сб|Усього годин Пн–Сб|Razem godzin Pn–Sob|Total hours Mon–Sat
+Всего часов Вс|Усього годин Нд|Razem godzin Nd|Total hours Sun
+Итого за месяц|Разом за місяць|Razem za miesiąc|Month total
+Итого|Разом|Razem|Total
+Итого (ч)|Разом (год)|Razem (godz.)|Total (h)
+Пн–Сб (ч)|Пн–Сб (год)|Pn–Sob (godz.)|Mon–Sat (h)
+Вс (ч)|Нд (год)|Nd (godz.)|Sun (h)
+Сотрудник|Працівник|Pracownik|Employee
+Сумма за день:|Сума за день:|Suma za dzień:|Daily total:
+Нач|Поч|Start|Start
+Кон|Кін|Koniec|End
+Часы|Год|Godz.|Hrs
+Начало|Початок|Początek|Start
+Конец|Кінець|Koniec|End
+Правило учёта:|Правило обліку:|Zasada rozliczania:|Rule:
+все часы смены (включая ночную смену 18:00 → 06:00 утра следующего дня) засчитываются в|усі години зміни (включно з нічною зміною 18:00 → 06:00 наступного дня) зараховуються в|wszystkie godziny zmiany (w tym nocnej 18:00 → 06:00 następnego dnia) liczone są w|all shift hours (including the night shift 18:00 → 06:00 the next day) are counted on the
+дату начала смены|дату початку зміни|dniu rozpoczęcia zmiany|shift start date
+и автоматически идут в|і автоматично йдуть у|i automatycznie trafiają do|and automatically go to
+или|або|lub|or
+. Максимум 2 непересекающиеся смены в сутки на человека.|. Максимум 2 зміни на добу на людину, що не перетинаються.|. Maksymalnie 2 niepokrywające się zmiany na dobę na osobę.|. Max 2 non-overlapping shifts per day per person.
+➕ Добавить вручную|➕ Додати вручну|➕ Dodaj ręcznie|➕ Add manually
+📱 Сканер QR-кода|📱 QR-сканер|📱 Skaner QR|📱 QR scanner
+📷 Фото листа (ИИ)|📷 Фото аркуша (ШІ)|📷 Zdjęcie arkusza (AI)|📷 Sheet photo (AI)
+🖼 Загрузить фото|🖼 Завантажити фото|🖼 Wgraj zdjęcie|🖼 Upload photo
+🔓 День открыт|🔓 День відкрито|🔓 Dzień otwarty|🔓 Day open
+🔒 День закрыт|🔒 День закрито|🔒 Dzień zamknięty|🔒 Day locked
+База сотрудников и порядок лидеров|База працівників і порядок лідерів|Baza pracowników i kolejność liderów|Employee roster & leader order
++ Новый сотрудник|+ Новий працівник|+ Nowy pracownik|+ New employee
+Лидеры закрепляются наверху в заданном порядке, остальные автоматически сортируются по номеру ZZ.|Лідери закріплюються вгорі в заданому порядку, решта автоматично сортується за номером ZZ.|Liderzy są przypięci na górze w ustalonej kolejności, pozostali sortowani są automatycznie wg numeru ZZ.|Leaders are pinned on top in the set order; the rest are sorted by ZZ number.
+Список сотрудников пуст. Добавьте сотрудника или загрузите смену.|Список працівників порожній. Додайте працівника або завантажте зміну.|Lista pracowników jest pusta. Dodaj pracownika lub wgraj zmianę.|The roster is empty. Add an employee or upload a shift.
+ЛИДЕР|ЛІДЕР|LIDER|LEADER
+★ Лидер|★ Лідер|★ Lider|★ Leader
+☆ В лидеры|☆ У лідери|☆ Na lidera|☆ Make leader
+Нет данных за выбранный месяц.|Немає даних за вибраний місяць.|Brak danych za wybrany miesiąc.|No data for the selected month.
+📊 Скачать табель Excel (.xlsx)|📊 Завантажити табель Excel (.xlsx)|📊 Pobierz ewidencję Excel (.xlsx)|📊 Download Excel timesheet (.xlsx)
+Настройки облака и распознавания фото|Налаштування хмари та розпізнавання фото|Ustawienia chmury i rozpoznawania zdjęć|Cloud & photo recognition settings
+Для совместной работы онлайн вставьте данные Supabase, укажите название смены в поле вверху (например,|Для спільної роботи онлайн вставте дані Supabase, вкажіть назву зміни у полі вгорі (наприклад,|Do wspólnej pracy online wklej dane Supabase i podaj nazwę zmiany w polu u góry (np.|For shared online work paste your Supabase details and set the shift name in the top field (e.g.,
+) и пароль этой смены. Для распознавания фото листов вставьте ключ Gemini API.|) і пароль цієї зміни. Для розпізнавання фото аркушів вставте ключ Gemini API.|) oraz hasło tej zmiany. Do rozpoznawania zdjęć arkuszy wklej klucz Gemini API.|) and this shift's password. To recognize sheet photos paste a Gemini API key.
+Gemini API Key (для распознавания фото листов):|Ключ Gemini API (для розпізнавання фото аркушів):|Klucz Gemini API (do rozpoznawania zdjęć arkuszy):|Gemini API Key (for sheet photo recognition):
+Получить бесплатный ключ Gemini →|Отримати безкоштовний ключ Gemini →|Pobierz darmowy klucz Gemini →|Get a free Gemini key →
+Проверить ключ|Перевірити ключ|Sprawdź klucz|Check key
+Модель:|Модель:|Model:|Model:
+(с резервом)|(з резервом)|(z zapasowym)|(with fallback)
+Supabase (онлайн-синхронизация):|Supabase (онлайн-синхронізація):|Supabase (synchronizacja online):|Supabase (online sync):
+Пароль смены (или админа)|Пароль зміни (або адміна)|Hasło zmiany (lub admina)|Shift (or admin) password
+Код пространства|Код простору|Kod przestrzeni|Workspace code
+📲 Скопировать ссылку настройки для другого телефона|📲 Скопіювати посилання налаштувань для іншого телефону|📲 Skopiuj link konfiguracji dla innego telefonu|📲 Copy setup link for another phone
+В ссылке — ключи и пароль. Отправляйте только в личные сообщения.|У посиланні — ключі та пароль. Надсилайте лише в особисті повідомлення.|Link zawiera klucze i hasło. Wysyłaj go tylko w prywatnych wiadomościach.|The link contains keys and a password. Send it in private messages only.
+🗂 Резервные копии (авто):|🗂 Резервні копії (авто):|🗂 Kopie zapasowe (auto):|🗂 Backups (auto):
+♻ Восстановить выбранную копию|♻ Відновити вибрану копію|♻ Przywróć wybraną kopię|♻ Restore selected backup
+Копии на телефоне — раз в 6 часов (последние 10). Облачные — почасовые за 30 дней.|Копії на телефоні — раз на 6 годин (останні 10). Хмарні — щогодинні за 30 днів.|Kopie na telefonie — co 6 godzin (ostatnie 10). Chmurowe — godzinne z 30 dni.|Phone copies are made every 6 hours (last 10). Cloud copies are hourly for 30 days.
+💾 Скачать бэкап JSON|💾 Завантажити бекап JSON|💾 Pobierz kopię JSON|💾 Download JSON backup
+📂 Восстановить JSON|📂 Відновити JSON|📂 Przywróć JSON|📂 Restore JSON
+Сохранить настройки|Зберегти налаштування|Zapisz ustawienia|Save settings
+Добавить смену вручную|Додати зміну вручну|Dodaj zmianę ręcznie|Add shift manually
+Достаточно номера ZZ (например, 345) — имя подставится из базы.|Достатньо номера ZZ (наприклад, 345) — ім'я підставиться з бази.|Wystarczy numer ZZ (np. 345) — imię uzupełni się z bazy.|Just the ZZ number (e.g. 345) is enough — the name is filled in from the roster.
+Выбрать из базы (необязательно):|Вибрати з бази (необов'язково):|Wybierz z bazy (opcjonalnie):|Pick from roster (optional):
+-- Новый / ввести ниже --|-- Новий / ввести нижче --|-- Nowy / wpisz poniżej --|-- New / enter below --
+Номер ZZ|Номер ZZ|Numer ZZ|ZZ number
+Имя и Фамилия|Ім'я та прізвище|Imię i nazwisko|First & last name
+Начало смены|Початок зміни|Początek zmiany|Shift start
+Конец смены|Кінець зміни|Koniec zmiany|Shift end
+Вычесть обязательный перерыв 30 мин (-0.50 ч)|Відняти обов'язкову перерву 30 хв (-0.50 год)|Odejmij obowiązkową przerwę 30 min (-0,50 godz.)|Deduct the mandatory 30 min break (-0.50 h)
+Добавить в смену|Додати у зміну|Dodaj do zmiany|Add to shift
+Сканер QR-кода пропуска|Сканер QR-коду перепустки|Skaner kodu QR przepustki|Badge QR scanner
+Наведите камеру на QR-код (например:|Наведіть камеру на QR-код (наприклад:|Skieruj aparat na kod QR (np.:|Point the camera at the QR code (e.g.:
+Настройки применены ✅|Налаштування застосовано ✅|Ustawienia zastosowane ✅|Settings applied ✅
+Ссылка настройки повреждена|Посилання налаштувань пошкоджене|Link konfiguracji jest uszkodzony|The setup link is damaged
+Ссылка скопирована. Откройте её на другом телефоне — настройки применятся сами.|Посилання скопійовано. Відкрийте його на іншому телефоні — налаштування застосуються самі.|Link skopiowany. Otwórz go na innym telefonie — ustawienia zastosują się same.|Link copied. Open it on another phone — the settings apply automatically.
+Скопируйте ссылку:|Скопіюйте посилання:|Skopiuj link:|Copy the link:
+День закрыт.|День закрито.|Dzień jest zamknięty.|The day is locked.
+Удалить все записи за выбранный день?|Видалити всі записи за вибраний день?|Usunąć wszystkie wpisy z wybranego dnia?|Delete all entries for the selected day?
+Резервная копия успешно восстановлена!|Резервну копію успішно відновлено!|Kopia zapasowa została przywrócona!|Backup restored successfully!
+Ошибка чтения JSON-файла:|Помилка читання JSON-файлу:|Błąd odczytu pliku JSON:|JSON file read error:
+Укажите номер ZZ.|Вкажіть номер ZZ.|Podaj numer ZZ.|Enter the ZZ number.
+Номера ZZ нет в базе — введите Имя и Фамилию один раз.|Номера ZZ немає в базі — введіть ім'я та прізвище один раз.|Numeru ZZ nie ma w bazie — wpisz imię i nazwisko jeden raz.|This ZZ number is not in the roster — enter the first and last name once.
+Заменить текущие данные выбранной копией? Текущие данные сохранятся как новая копия на телефоне.|Замінити поточні дані вибраною копією? Поточні дані збережуться як нова копія на телефоні.|Zastąpić bieżące dane wybraną kopią? Bieżące dane zostaną zapisane jako nowa kopia na telefonie.|Replace the current data with the selected backup? The current data will be saved as a new phone backup.
+Не удалось загрузить копию из облака.|Не вдалося завантажити копію з хмари.|Nie udało się pobrać kopii z chmury.|Could not load the cloud backup.
+Введите номер ZZ (например, ZZ00345):|Введіть номер ZZ (наприклад, ZZ00345):|Wpisz numer ZZ (np. ZZ00345):|Enter the ZZ number (e.g. ZZ00345):
+Введите Имя и Фамилию:|Введіть ім'я та прізвище:|Wpisz imię i nazwisko:|Enter the first and last name:
+У сотрудника уже записаны 2 смены за этот день (3-я смена заблокирована).|У працівника вже записано 2 зміни за цей день (3-тя зміна заблокована).|Pracownik ma już 2 zmiany tego dnia (3. zmiana zablokowana).|The employee already has 2 shifts on this day (a 3rd shift is blocked).
+Нельзя добавить 2-ю смену, пока не закрыта 1-я смена (укажите время окончания).|Не можна додати 2-гу зміну, поки не закрита 1-ша (вкажіть час завершення).|Nie można dodać 2. zmiany, dopóki 1. nie jest zamknięta (podaj godzinę zakończenia).|You cannot add a 2nd shift until the 1st one is closed (set the end time).
+Интервал|Інтервал|Przedział|Interval
+пересекается с первой сменой|перетинається з першою зміною|pokrywa się z pierwszą zmianą|overlaps the first shift
+Не указан Gemini API Key|Не вказано ключ Gemini API|Brak klucza Gemini API|Gemini API Key is missing
+Откройте «⚙ Настройки» вверху справа, вставьте бесплатный ключ из Google AI Studio и нажмите «Сохранить настройки».|Відкрийте «⚙ Налаштування» вгорі праворуч, вставте безкоштовний ключ із Google AI Studio і натисніть «Зберегти налаштування».|Otwórz «⚙ Ustawienia» u góry po prawej, wklej darmowy klucz z Google AI Studio i naciśnij «Zapisz ustawienia».|Open «⚙ Settings» at the top right, paste a free key from Google AI Studio and press «Save settings».
+Сжимаем фото и отправляем в Gemini...|Стискаємо фото й надсилаємо до Gemini...|Kompresujemy zdjęcie i wysyłamy do Gemini...|Compressing the photo and sending it to Gemini...
+Обычно занимает 3–8 секунд.|Зазвичай це займає 3–8 секунд.|Zwykle trwa to 3–8 sekund.|Usually takes 3–8 seconds.
+Распознаём строки листа табеля...|Розпізнаємо рядки аркуша табеля...|Rozpoznajemy wiersze arkusza...|Recognizing the sheet rows...
+Извлекаем номера ZZ, имена и время смен.|Витягуємо номери ZZ, імена та час змін.|Odczytujemy numery ZZ, imiona i godziny zmian.|Extracting ZZ numbers, names and shift times.
+Сотрудники на фото не найдены|Працівників на фото не знайдено|Nie znaleziono pracowników na zdjęciu|No employees found in the photo
+Убедитесь, что таблица на фото чёткая, без сильных бликов и обрезанных столбцов.|Переконайтеся, що таблиця на фото чітка, без сильних відблисків і обрізаних стовпців.|Upewnij się, że tabela na zdjęciu jest wyraźna, bez silnych odbłysków i ucietych kolumn.|Make sure the table in the photo is sharp, without strong glare or cropped columns.
+Все распознанные строки добавлены в текущую смену.|Усі розпізнані рядки додано до поточної зміни.|Wszystkie rozpoznane wiersze dodano do bieżącej zmiany.|All recognized rows were added to the current shift.
+Распознано и добавлено:|Розпізнано та додано:|Rozpoznano i dodano:|Recognized and added:
+Пропущено:|Пропущено:|Pominięto:|Skipped:
+Не удалось распознать лист|Не вдалося розпізнати аркуш|Nie udało się rozpoznać arkusza|Could not recognize the sheet
+День закрыт для редактирования|День закрито для редагування|Dzień zamknięty do edycji|The day is locked for editing
+Нажмите «🔒 День закрыт», чтобы разблокировать добавление записей.|Натисніть «🔒 День закрито», щоб розблокувати додавання записів.|Naciśnij «🔒 Dzień zamknięty», aby odblokować dodawanie wpisów.|Press «🔒 Day locked» to unlock adding entries.
+Введите ключ перед проверкой.|Введіть ключ перед перевіркою.|Wpisz klucz przed sprawdzeniem.|Enter the key before checking.
+Проверяем ключ...|Перевіряємо ключ...|Sprawdzamy klucz...|Checking the key...
+✅ Ключ рабочий! Можно сохранять настройки.|✅ Ключ працює! Можна зберігати налаштування.|✅ Klucz działa! Możesz zapisać ustawienia.|✅ The key works! You can save the settings.
+❌ Ошибка ключа:|❌ Помилка ключа:|❌ Błąd klucza:|❌ Key error:
+Не удалось открыть камеру для QR-сканера:|Не вдалося відкрити камеру для QR-сканера:|Nie udało się otworzyć aparatu dla skanera QR:|Could not open the camera for the QR scanner:
+Не удалось прочитать файл изображения.|Не вдалося прочитати файл зображення.|Nie udało się odczytać pliku obrazu.|Could not read the image file.
+Файл не является корректным изображением.|Файл не є коректним зображенням.|Plik nie jest prawidłowym obrazem.|The file is not a valid image.`;
+    const LANGS = ["ru", "uk", "pl", "en"];
+    let LANG = localStorage.getItem("skayn_lang") || "ru";
+    const DICT = { uk: { m: new Map(), long: [] }, pl: { m: new Map(), long: [] }, en: { m: new Map(), long: [] } };
+    I18N_RAW.trim().split("\n").forEach(line => {
+      const p = line.split("|");
+      if (p.length < 4) return;
+      const ru = p[0].trim().replace(/\s+/g, " ");
+      for (let i = 1; i < 4; i++) {
+        const d = DICT[LANGS[i]];
+        d.m.set(ru, p[i].trim());
+        if (ru.length >= 8) d.long.push([ru, p[i].trim()]);
+      }
+    });
+    Object.values(DICT).forEach(d => d.long.sort((a, b) => b[0].length - a[0].length));
+    const RX = [
+      [/(\d+)\s*чел\./g, ["$1 осіб", "$1 os.", "$1 ppl"]],
+      [/(\d)(\s?)ч(?![а-яёА-ЯЁ])/g, ["$1$2год", "$1$2godz.", "$1$2h"]],
+      [/\(Вс\)/g, ["(Нд)", "(Nd)", "(Sun)"]],
+      [/^На (\S+) пока нет записей\./, ["Немає записів на $1.", "Brak wpisów na $1.", "No entries for $1."]],
+      [/Загрузите фото листа, отсканируйте QR-код или добавьте сотрудника вручную\./, ["Завантажте фото аркуша, скануйте QR-код або додайте працівника вручну.", "Wgraj zdjęcie arkusza, zeskanuj kod QR lub dodaj pracownika ręcznie.", "Upload a sheet photo, scan a QR code or add an employee manually."]],
+      [/Добавлено: (\d+)/g, ["Додано: $1", "Dodano: $1", "Added: $1"]]
+    ];
+    function trText(s) {
+      if (LANG === "ru" || !s) return s;
+      const lead = s.match(/^\s*/)[0], trail = s.match(/\s*$/)[0];
+      let t = s.trim().replace(/\s+/g, " ");
+      if (!/[А-Яа-яЁё]/.test(t)) return s;
+      const d = DICT[LANG];
+      if (d.m.has(t)) return lead + d.m.get(t) + trail;
+      for (const [ru, x] of d.long) if (t.includes(ru)) t = t.split(ru).join(x);
+      const li = LANGS.indexOf(LANG) - 1;
+      for (const [re, arr] of RX) t = t.replace(re, arr[li]);
+      return lead + t + trail;
+    }
+    function applyLangTo(root) {
+      if (!root) return;
+      const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      let n;
+      while ((n = w.nextNode())) {
+        if (/^(SCRIPT|STYLE|TEXTAREA)$/.test(n.parentNode.nodeName)) continue;
+        if (n.__tr !== undefined && n.nodeValue !== n.__tr) n.__ru = n.nodeValue;
+        if (n.__ru === undefined) n.__ru = n.nodeValue;
+        const out = trText(n.__ru);
+        n.__tr = out;
+        if (n.nodeValue !== out) n.nodeValue = out;
+      }
+      const els = root.nodeType === 1 ? [root, ...root.querySelectorAll("[placeholder],[title]")] : [];
+      els.forEach(el => {
+        ["placeholder", "title"].forEach(a => {
+          if (!el.hasAttribute || !el.hasAttribute(a)) return;
+          if (el["__ru_" + a] === undefined || el.getAttribute(a) !== el["__tr_" + a]) el["__ru_" + a] = el.getAttribute(a);
+          const o = trText(el["__ru_" + a]);
+          el["__tr_" + a] = o;
+          if (el.getAttribute(a) !== o) el.setAttribute(a, o);
+        });
+      });
+    }
+    const langObserver = new MutationObserver(muts => {
+      if (LANG === "ru") return;
+      const roots = new Set();
+      muts.forEach(m => {
+        if (m.type === "characterData") roots.add(m.target.parentNode);
+        else m.addedNodes.forEach(nd => roots.add(nd.nodeType === 1 ? nd : nd.parentNode));
+      });
+      runLang([...roots]);
+    });
+    function runLang(roots) {
+      langObserver.disconnect();
+      try { roots.forEach(applyLangTo); } finally { langObserver.observe(document.body, { childList: true, subtree: true, characterData: true }); }
+    }
+    const _al = window.alert.bind(window), _co = window.confirm.bind(window), _pr = window.prompt.bind(window);
+    window.alert = m => _al(trText(String(m)));
+    window.confirm = m => _co(trText(String(m)));
+    window.prompt = (m, d) => _pr(trText(String(m)), d);
+    const langSelect = document.getElementById("langSelect");
+    langSelect.value = LANG;
+    document.documentElement.lang = LANG === "uk" ? "uk" : LANG;
+    langSelect.addEventListener("change", () => {
+      LANG = langSelect.value;
+      localStorage.setItem("skayn_lang", LANG);
+      document.documentElement.lang = LANG;
+      runLang([document.body]);
+    });
+
     // Boot
     loadLocalData();
     renderAll();
     initSupabaseSync();
+    runLang([document.body]);
   </script>
 </body>
 </html>
